@@ -154,6 +154,7 @@
         <button class="icon-btn" onclick="signOutUser()" title="Keluar">⏻</button>
       </div>
     </div>
+    <div id="periodRangeBar" style="background:var(--navy); color:rgba(255,255,255,0.75); font-size:11px; text-align:center; padding:0 0 8px;"></div>
 
     <!-- DASHBOARD PAGE -->
     <div class="page" id="page-dashboard">
@@ -224,6 +225,8 @@
       </div>
       <div style="height:20px;"></div>
       <div class="section-label">Data</div>
+      <button class="btn-primary" style="background:var(--orange); color:var(--navy); margin-bottom:10px;" onclick="migrateToPayCycle()">Migrasi ke Siklus Gajian (25-24)</button>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:20px;">Klik sekali kalau ada transaksi lama yang periode bulannya masih pakai kalender biasa (1-31), supaya disesuaikan ke siklus gajian.</div>
       <button class="btn-primary" style="background:var(--blue); color:var(--navy); margin-bottom:20px;" onclick="exportCSV()">Export Semua Transaksi ke CSV</button>
       <div class="section-label">Akun</div>
       <div style="font-size:13px; color:var(--muted); margin-bottom:10px;" id="userEmailDisplay"></div>
@@ -330,6 +333,12 @@ window.onPeriodChange = function(){
   currentPeriod.year = parseInt(document.getElementById('yearSel').value);
   loadPeriodData();
   renderReserveCard();
+  refreshPeriodRangeBar();
+}
+
+function refreshPeriodRangeBar(){
+  const el = document.getElementById('periodRangeBar');
+  if(el) el.textContent = `Periode gajian: ${periodRangeLabel(currentPeriod.year, currentPeriod.month)}`;
 }
 
 function periodKey(){
@@ -385,6 +394,7 @@ onAuthStateChanged(auth, async (user)=>{
     initPeriodSelectors();
     loadPeriodData();
     initReserveTracking();
+    refreshPeriodRangeBar();
     goPage('dashboard');
   } else {
     currentUser = null;
@@ -451,6 +461,28 @@ window.formatAmountInput = function(el){
   el.value = val ? 'Rp' + Number(val).toLocaleString('id-ID') : '';
 }
 
+// ---------- PAY-CYCLE PERIOD (25 - 24 bulan depan) ----------
+const CYCLE_CUTOFF_DAY = 25;
+function dateToPeriod(dateStr){
+  const parts = (dateStr || '').split('-');
+  let year = parseInt(parts[0]);
+  let month = parseInt(parts[1]);
+  const day = parseInt(parts[2]);
+  if(!year || !month || !day){
+    const now = new Date();
+    year = now.getFullYear(); month = now.getMonth()+1;
+  } else if(day >= CYCLE_CUTOFF_DAY){
+    month += 1;
+    if(month > 12){ month = 1; year += 1; }
+  }
+  return `${year}-${String(month).padStart(2,'0')}`;
+}
+function periodRangeLabel(year, month){
+  const startMonth = month === 1 ? 12 : month - 1;
+  const startYear = month === 1 ? year - 1 : year;
+  return `${CYCLE_CUTOFF_DAY} ${MONTH_NAMES_ID[startMonth-1].slice(0,3)} – ${CYCLE_CUTOFF_DAY-1} ${MONTH_NAMES_ID[month-1].slice(0,3)}`;
+}
+
 window.saveTransaction = async function(){
   if(!selectedType){ showToast('Pilih jenis transaksi dulu'); return; }
   if(!selectedCategory){ showToast('Pilih kategori dulu'); return; }
@@ -459,7 +491,6 @@ window.saveTransaction = async function(){
   if(!amount){ showToast('Isi jumlah'); return; }
   const details = document.getElementById('detailsInput').value.trim();
   const dateVal = document.getElementById('dateInput').value;
-  const d = dateVal ? new Date(dateVal) : new Date();
 
   await addDoc(collection(db, 'users', currentUser.uid, 'transactions'), {
     type: selectedType,
@@ -467,7 +498,7 @@ window.saveTransaction = async function(){
     amount: amount,
     details: details,
     date: dateVal,
-    periodKey: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
+    periodKey: dateToPeriod(dateVal),
     createdAt: serverTimestamp()
   });
 
@@ -742,6 +773,26 @@ window.removeCategory = async function(type, idx){
   await saveCategories();
   renderCatMgr();
   showToast('Kategori dihapus');
+}
+
+// ---------- MIGRATION: recompute periodKey using pay-cycle (25-24) ----------
+window.migrateToPayCycle = async function(){
+  showToast('Mengecek transaksi lama...');
+  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'transactions'));
+  let changed = 0;
+  const updates = [];
+  snap.forEach(d=>{
+    const t = d.data();
+    if(!t.date) return;
+    const correctPeriod = dateToPeriod(t.date);
+    if(t.periodKey !== correctPeriod){
+      updates.push(setDoc(doc(db, 'users', currentUser.uid, 'transactions', d.id), { periodKey: correctPeriod }, { merge: true }));
+      changed++;
+    }
+  });
+  await Promise.all(updates);
+  showToast(changed > 0 ? `${changed} transaksi disesuaikan ✓` : 'Semua transaksi sudah sesuai ✓');
+  loadPeriodData();
 }
 
 // ---------- EXPORT CSV ----------
