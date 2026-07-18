@@ -113,6 +113,19 @@
   select{font-family:inherit;}
   .catmgr-row{display:flex; justify-content:space-between; align-items:center; background:var(--card); padding:10px 14px; border-radius:10px; margin-bottom:6px;}
   .catmgr-row button{background:none; border:none; color:var(--red); font-size:18px;}
+
+  /* Reserve fund */
+  .reserve-card{background:var(--card); border-radius:16px; padding:16px; box-shadow:0 2px 10px rgba(0,0,0,0.05); margin-bottom:14px;}
+  .reserve-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .reserve-toggle-btn{background:var(--navy-light); color:var(--navy); border:none; border-radius:20px; padding:7px 12px; font-size:11px; font-weight:600;}
+  .reserve-row{display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px solid #F0F3F5;}
+  .reserve-row span:last-child{font-weight:600; color:var(--navy);}
+  .reserve-total-row{display:flex; justify-content:space-between; padding:10px 0 2px; margin-top:4px; font-size:14px; font-weight:700; color:var(--navy); border-top:2px solid var(--navy-light);}
+  #reserveForm{margin-top:14px; padding-top:14px; border-top:1px dashed #E1E8ED;}
+  .reserve-hist-item{display:flex; justify-content:space-between; align-items:center; padding:8px 0; font-size:12px; border-bottom:1px solid #F0F3F5;}
+  .reserve-hist-item .rh-note{color:var(--muted);}
+  .reserve-hist-item .rh-amt{font-weight:600; color:var(--red);}
+  .reserve-hist-item button{background:none; border:none; color:#ccc; font-size:14px;}
 </style>
 </head>
 <body>
@@ -154,6 +167,27 @@
         <div class="chart-card"><h3>Expenses Breakdown</h3><canvas id="donutChart"></canvas></div>
       </div>
       <div class="summary-grid" id="summaryGrid"></div>
+
+      <div class="reserve-card">
+        <div class="reserve-header">
+          <span class="section-label" style="margin:0;">Sisa Dana per Bulan</span>
+          <button class="reserve-toggle-btn" onclick="toggleReserveForm()">Gunakan Sisa Dana</button>
+        </div>
+        <div id="reserveList"></div>
+        <div class="reserve-total-row">
+          <span>Total Sisa <span id="reserveYearLabel"></span></span>
+          <span id="reserveTotal">Rp0</span>
+        </div>
+
+        <div id="reserveForm" style="display:none;">
+          <div class="section-label">Pakai Sisa Dana</div>
+          <input type="tel" inputmode="numeric" class="input-field" id="reserveAmountInput" placeholder="Rp0" oninput="formatAmountInput(this)">
+          <input class="input-field" id="reserveNoteInput" placeholder="Untuk apa? (misal: servis motor mendadak)">
+          <input class="input-field" id="reserveDateInput" type="date">
+          <button class="btn-primary" onclick="useReserve()">Ambil dari Sisa Dana</button>
+          <div id="reserveHistoryList"></div>
+        </div>
+      </div>
     </div>
 
     <!-- QUICK ADD PAGE -->
@@ -295,6 +329,7 @@ window.onPeriodChange = function(){
   currentPeriod.month = parseInt(document.getElementById('monthSel').value);
   currentPeriod.year = parseInt(document.getElementById('yearSel').value);
   loadPeriodData();
+  renderReserveCard();
 }
 
 function periodKey(){
@@ -349,12 +384,15 @@ onAuthStateChanged(auth, async (user)=>{
     await loadCategories();
     initPeriodSelectors();
     loadPeriodData();
+    initReserveTracking();
     goPage('dashboard');
   } else {
     currentUser = null;
     document.getElementById('authScreen').style.display = 'block';
     document.getElementById('mainApp').style.display = 'none';
     if(unsubTx) unsubTx();
+    if(unsubAllTx) unsubAllTx();
+    if(unsubReserveWithdrawals) unsubReserveWithdrawals();
   }
 });
 
@@ -734,6 +772,154 @@ window.exportCSV = async function(){
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('CSV terdownload ✓');
+}
+
+// ---------- RESERVE FUND (Sisa Dana antar-bulan) ----------
+let allTimeTransactions = [];
+let reserveWithdrawals = [];
+let unsubAllTx = null;
+let unsubReserveWithdrawals = null;
+const MONTH_NAMES_ID = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+
+function initReserveTracking(){
+  if(unsubAllTx) unsubAllTx();
+  if(unsubReserveWithdrawals) unsubReserveWithdrawals();
+
+  unsubAllTx = onSnapshot(collection(db, 'users', currentUser.uid, 'transactions'), (snap)=>{
+    allTimeTransactions = [];
+    snap.forEach(d=> allTimeTransactions.push({id:d.id, ...d.data()}));
+    renderReserveCard();
+  });
+
+  unsubReserveWithdrawals = onSnapshot(collection(db, 'users', currentUser.uid, 'reserveWithdrawals'), (snap)=>{
+    reserveWithdrawals = [];
+    snap.forEach(d=> reserveWithdrawals.push({id:d.id, ...d.data()}));
+    reserveWithdrawals.sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+    renderReserveCard();
+  });
+}
+
+function computeReserveList(){
+  const surplusMap = {}; // period -> {income, out}
+  allTimeTransactions.forEach(t=>{
+    const p = t.periodKey;
+    if(!p) return;
+    if(!surplusMap[p]) surplusMap[p] = {income:0, out:0};
+    if(t.type === 'income') surplusMap[p].income += t.amount;
+    else surplusMap[p].out += t.amount;
+  });
+
+  const withdrawnMap = {}; // period -> amount withdrawn
+  reserveWithdrawals.forEach(w=>{
+    (w.allocations||[]).forEach(a=>{
+      withdrawnMap[a.period] = (withdrawnMap[a.period]||0) + a.amount;
+    });
+  });
+
+  return Object.keys(surplusMap).sort().map(period=>{
+    const surplus = Math.max(surplusMap[period].income - surplusMap[period].out, 0);
+    const withdrawn = withdrawnMap[period] || 0;
+    const available = Math.max(surplus - withdrawn, 0);
+    return { period, surplus, withdrawn, available };
+  });
+}
+
+function renderReserveCard(){
+  const list = computeReserveList();
+  const year = currentPeriod.year;
+  document.getElementById('reserveYearLabel').textContent = year;
+
+  const rowsForYear = list.filter(r => r.period.startsWith(String(year)) && r.available > 0);
+  let total = 0;
+  const html = rowsForYear.map(r=>{
+    total += r.available;
+    const m = parseInt(r.period.split('-')[1]) - 1;
+    return `<div class="reserve-row"><span>${MONTH_NAMES_ID[m]}</span><span>${formatRp(r.available)}</span></div>`;
+  }).join('');
+
+  document.getElementById('reserveList').innerHTML = html || '<div class="empty-state" style="padding:10px 0;">Belum ada sisa dana</div>';
+  document.getElementById('reserveTotal').textContent = formatRp(total);
+
+  renderReserveHistory();
+}
+
+function renderReserveHistory(){
+  const wrap = document.getElementById('reserveHistoryList');
+  if(!wrap) return;
+  if(reserveWithdrawals.length === 0){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<div class="section-label">Riwayat Pemakaian</div>' + reserveWithdrawals.map(w=>{
+    const fromLabel = (w.allocations||[]).map(a=>{
+      const m = parseInt(a.period.split('-')[1]) - 1;
+      return `${MONTH_NAMES_ID[m]} ${formatRp(a.amount)}`;
+    }).join(', ');
+    return `<div class="reserve-hist-item">
+      <div>
+        <div>${w.note || '(tanpa catatan)'} · ${w.date || ''}</div>
+        <div class="rh-note">dari: ${fromLabel}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="rh-amt">-${formatRp(w.amount)}</div>
+        <button onclick="deleteReserveWithdrawal('${w.id}')">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.toggleReserveForm = function(){
+  const form = document.getElementById('reserveForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  if(!document.getElementById('reserveDateInput').value){
+    document.getElementById('reserveDateInput').valueAsDate = new Date();
+  }
+}
+
+window.useReserve = async function(){
+  const raw = document.getElementById('reserveAmountInput').dataset.raw || '0';
+  let needed = parseInt(raw);
+  const note = document.getElementById('reserveNoteInput').value.trim();
+  const date = document.getElementById('reserveDateInput').value;
+
+  if(!needed){ showToast('Isi jumlah dulu'); return; }
+
+  const list = computeReserveList().filter(r=> r.available > 0); // already sorted oldest-first
+  const totalAvailable = list.reduce((s,r)=> s + r.available, 0);
+  if(totalAvailable === 0){ showToast('Belum ada sisa dana yang bisa dipakai'); return; }
+
+  const allocations = [];
+  for(const r of list){
+    if(needed <= 0) break;
+    const take = Math.min(r.available, needed);
+    allocations.push({ period: r.period, amount: take });
+    needed -= take;
+  }
+
+  const totalTaken = allocations.reduce((s,a)=> s+a.amount, 0);
+
+  await addDoc(collection(db, 'users', currentUser.uid, 'reserveWithdrawals'), {
+    amount: totalTaken,
+    note, date,
+    allocations,
+    createdAt: serverTimestamp()
+  });
+
+  document.getElementById('reserveAmountInput').value = '';
+  document.getElementById('reserveAmountInput').dataset.raw = '';
+  document.getElementById('reserveNoteInput').value = '';
+
+  if(needed > 0){
+    showToast(`Diambil ${formatRp(totalTaken)}, sisa dana tidak cukup untuk ${formatRp(needed)}`);
+  } else {
+    const fromText = allocations.map(a=>{
+      const m = parseInt(a.period.split('-')[1]) - 1;
+      return `${MONTH_NAMES_ID[m]} ${formatRp(a.amount)}`;
+    }).join(', ');
+    showToast(`Diambil dari: ${fromText}`);
+  }
+}
+
+window.deleteReserveWithdrawal = async function(id){
+  await deleteDoc(doc(db, 'users', currentUser.uid, 'reserveWithdrawals', id));
+  showToast('Riwayat pemakaian dihapus');
 }
 
 // ---------- NAV ----------
