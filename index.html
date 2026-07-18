@@ -332,6 +332,7 @@ onAuthStateChanged(auth, async (user)=>{
     await loadCategories();
     initPeriodSelectors();
     loadPeriodData();
+    goPage('dashboard');
   } else {
     currentUser = null;
     document.getElementById('authScreen').style.display = 'block';
