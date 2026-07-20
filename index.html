@@ -659,8 +659,27 @@ window.deleteTx = async function(id){
 function actualFor(typeKey, cat){
   return allTransactions.filter(t=>t.type===typeKey && t.category===cat).reduce((s,t)=>s+t.amount,0);
 }
-function plannedFor(typeKey, cat){
+function isAutoFreeCategory(typeKey, cat){
+  return typeKey === 'variableExpenses' && (cat||'').trim().toUpperCase() === 'SISA UANG FREE';
+}
+function rawPlanned(typeKey, cat){
   return (currentBudget[typeKey] && currentBudget[typeKey][cat]) || 0;
+}
+function computeAutoFreeAmount(){
+  let plannedIncome = 0;
+  (userCategories.income || []).forEach(c => plannedIncome += rawPlanned('income', c));
+  let plannedOther = 0;
+  ['fixedExpenses','variableExpenses','savings','debts'].forEach(typeKey=>{
+    (userCategories[typeKey] || []).forEach(c=>{
+      if(isAutoFreeCategory(typeKey, c)) return; // exclude itself from the "other" sum
+      plannedOther += rawPlanned(typeKey, c);
+    });
+  });
+  return Math.max(plannedIncome - plannedOther, 0);
+}
+function plannedFor(typeKey, cat){
+  if(isAutoFreeCategory(typeKey, cat)) return computeAutoFreeAmount();
+  return rawPlanned(typeKey, cat);
 }
 
 function renderPlanPage(){
@@ -687,19 +706,23 @@ function renderPlanPage(){
     cats.forEach(cat=>{
       const planned = plannedFor(typeKey,cat);
       const actual = actualFor(typeKey,cat);
+      const isAuto = isAutoFreeCategory(typeKey, cat);
       const diff = isIncome ? (actual - planned) : (planned - actual);
       const diffLabel = isIncome
         ? (diff >= 0 ? `Lebih ${formatRp(diff)}` : `Kurang ${formatRp(Math.abs(diff))}`)
         : (diff >= 0 ? `Sisa ${formatRp(diff)}` : `Over ${formatRp(Math.abs(diff))}`);
       const diffClass = diff >= 0 ? 'under' : 'over';
+      const plannedFieldHtml = isAuto
+        ? `<div class="prow-actual" style="color:var(--navy); font-weight:700;">${formatRp(planned)}</div>`
+        : `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
+              value="${planned ? planned.toLocaleString('id-ID') : ''}" placeholder="0"
+              oninput="formatPlanInput(this)" onblur="savePlannedAmount(this)">`;
       html += `<div class="plan-row">
-        <div class="prow-top"><span class="prow-cat">${cat}</span></div>
+        <div class="prow-top"><span class="prow-cat">${cat}${isAuto ? ' <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis dari sisa budget)</span>' : ''}</span></div>
         <div class="prow-inputs">
           <div style="flex:1;">
-            <label>Planned</label>
-            <input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
-              value="${planned ? planned.toLocaleString('id-ID') : ''}" placeholder="0"
-              oninput="formatPlanInput(this)" onblur="savePlannedAmount(this)">
+            <label>${isAuto ? 'Planned (auto)' : 'Planned'}</label>
+            ${plannedFieldHtml}
           </div>
           <div style="flex:1;">
             <label>Actual</label>
