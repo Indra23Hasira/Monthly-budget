@@ -239,6 +239,16 @@
       <button class="btn-primary" style="background:var(--blue); color:var(--navy); margin-bottom:20px;" onclick="exportCSV()">Export Semua Transaksi ke CSV</button>
       <div class="section-label">Akun</div>
       <div style="font-size:13px; color:var(--muted); margin-bottom:10px;" id="userEmailDisplay"></div>
+
+      <div id="setPasswordSection" style="display:none; margin-bottom:20px;">
+        <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Akun ini masih login via Google. Set password supaya bisa login pakai email + password juga (Google tetap bisa dipakai sebagai backup).</div>
+        <div class="auth-error" id="setPasswordError"></div>
+        <div class="auth-error" id="setPasswordSuccess" style="color:#2e7d32;"></div>
+        <input class="input-field" type="password" id="newPasswordInput" placeholder="Password baru (min. 6 karakter)" autocomplete="new-password">
+        <input class="input-field" type="password" id="confirmPasswordInput" placeholder="Ulangi password baru" autocomplete="new-password">
+        <button class="btn-primary" style="background:var(--blue); color:var(--navy);" onclick="setAccountPassword()">Set Password</button>
+      </div>
+
       <button class="btn-primary" style="background:var(--red);" onclick="signOutUser()">Keluar</button>
     </div>
 
@@ -270,7 +280,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup
+  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup,
+  EmailAuthProvider, linkWithCredential
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
@@ -408,12 +419,46 @@ function translateAuthError(code){
 
 window.signOutUser = function(){ signOut(auth); }
 
+function hasPasswordProvider(user){
+  return user.providerData.some(p => p.providerId === 'password');
+}
+
+window.setAccountPassword = async function(){
+  const newPass = document.getElementById('newPasswordInput').value;
+  const confirmPass = document.getElementById('confirmPasswordInput').value;
+  const errEl = document.getElementById('setPasswordError');
+  const okEl = document.getElementById('setPasswordSuccess');
+  errEl.textContent = '';
+  okEl.textContent = '';
+
+  if(!newPass || newPass.length < 6){ errEl.textContent = 'Password minimal 6 karakter.'; return; }
+  if(newPass !== confirmPass){ errEl.textContent = 'Konfirmasi password tidak sama.'; return; }
+  if(!currentUser){ errEl.textContent = 'Kamu belum login.'; return; }
+
+  try{
+    const credential = EmailAuthProvider.credential(currentUser.email, newPass);
+    await linkWithCredential(currentUser, credential);
+    okEl.textContent = 'Berhasil! Sekarang kamu bisa login pakai email + password.';
+    document.getElementById('newPasswordInput').value = '';
+    document.getElementById('confirmPasswordInput').value = '';
+    document.getElementById('setPasswordSection').style.display = 'none';
+  } catch(e){
+    if(e.code === 'auth/provider-already-linked'){
+      errEl.textContent = 'Akun ini sudah punya password.';
+      document.getElementById('setPasswordSection').style.display = 'none';
+    } else {
+      errEl.textContent = translateAuthError(e.code);
+    }
+  }
+}
+
 onAuthStateChanged(auth, async (user)=>{
   if(user){
     currentUser = user;
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     document.getElementById('userEmailDisplay').textContent = user.email;
+    document.getElementById('setPasswordSection').style.display = hasPasswordProvider(user) ? 'none' : 'block';
     await loadCategories();
     initPeriodSelectors();
     loadPeriodData();
