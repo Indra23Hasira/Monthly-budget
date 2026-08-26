@@ -96,6 +96,7 @@
   .prow-diff{font-size:11px; text-align:right; margin-top:4px; font-weight:600;}
   .prow-diff.under{color:var(--green);}
   .prow-diff.over{color:var(--red);}
+  .planned-dest-input{width:100%; margin-top:8px; border:1px dashed #D8E4EA; border-radius:8px; padding:7px 10px; font-size:12px; background:#FAFCFD; color:var(--navy);}
   .plan-summary-card{background:var(--navy); color:#fff; border-radius:14px; padding:14px 16px; margin-bottom:16px; display:flex; justify-content:space-between;}
   .plan-summary-card .col{text-align:center; flex:1;}
   .plan-summary-card .col .lbl{font-size:10px; opacity:0.7; text-transform:uppercase;}
@@ -239,16 +240,6 @@
       <button class="btn-primary" style="background:var(--blue); color:var(--navy); margin-bottom:20px;" onclick="exportCSV()">Export Semua Transaksi ke CSV</button>
       <div class="section-label">Akun</div>
       <div style="font-size:13px; color:var(--muted); margin-bottom:10px;" id="userEmailDisplay"></div>
-
-      <div id="setPasswordSection" style="display:none; margin-bottom:20px;">
-        <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Akun ini masih login via Google. Set password supaya bisa login pakai email + password juga (Google tetap bisa dipakai sebagai backup).</div>
-        <div class="auth-error" id="setPasswordError"></div>
-        <div class="auth-error" id="setPasswordSuccess" style="color:#2e7d32;"></div>
-        <input class="input-field" type="password" id="newPasswordInput" placeholder="Password baru (min. 6 karakter)" autocomplete="new-password">
-        <input class="input-field" type="password" id="confirmPasswordInput" placeholder="Ulangi password baru" autocomplete="new-password">
-        <button class="btn-primary" style="background:var(--blue); color:var(--navy);" onclick="setAccountPassword()">Set Password</button>
-      </div>
-
       <button class="btn-primary" style="background:var(--red);" onclick="signOutUser()">Keluar</button>
     </div>
 
@@ -280,8 +271,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup,
-  EmailAuthProvider, linkWithCredential
+  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
@@ -419,46 +409,12 @@ function translateAuthError(code){
 
 window.signOutUser = function(){ signOut(auth); }
 
-function hasPasswordProvider(user){
-  return user.providerData.some(p => p.providerId === 'password');
-}
-
-window.setAccountPassword = async function(){
-  const newPass = document.getElementById('newPasswordInput').value;
-  const confirmPass = document.getElementById('confirmPasswordInput').value;
-  const errEl = document.getElementById('setPasswordError');
-  const okEl = document.getElementById('setPasswordSuccess');
-  errEl.textContent = '';
-  okEl.textContent = '';
-
-  if(!newPass || newPass.length < 6){ errEl.textContent = 'Password minimal 6 karakter.'; return; }
-  if(newPass !== confirmPass){ errEl.textContent = 'Konfirmasi password tidak sama.'; return; }
-  if(!currentUser){ errEl.textContent = 'Kamu belum login.'; return; }
-
-  try{
-    const credential = EmailAuthProvider.credential(currentUser.email, newPass);
-    await linkWithCredential(currentUser, credential);
-    okEl.textContent = 'Berhasil! Sekarang kamu bisa login pakai email + password.';
-    document.getElementById('newPasswordInput').value = '';
-    document.getElementById('confirmPasswordInput').value = '';
-    document.getElementById('setPasswordSection').style.display = 'none';
-  } catch(e){
-    if(e.code === 'auth/provider-already-linked'){
-      errEl.textContent = 'Akun ini sudah punya password.';
-      document.getElementById('setPasswordSection').style.display = 'none';
-    } else {
-      errEl.textContent = translateAuthError(e.code);
-    }
-  }
-}
-
 onAuthStateChanged(auth, async (user)=>{
   if(user){
     currentUser = user;
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     document.getElementById('userEmailDisplay').textContent = user.email;
-    document.getElementById('setPasswordSection').style.display = hasPasswordProvider(user) ? 'none' : 'block';
     await loadCategories();
     initPeriodSelectors();
     loadPeriodData();
@@ -732,7 +688,15 @@ function isAutoFreeCategory(typeKey, cat){
   return typeKey === 'variableExpenses' && (cat||'').trim().toUpperCase() === 'SISA UANG FREE';
 }
 function rawPlanned(typeKey, cat){
-  return (currentBudget[typeKey] && currentBudget[typeKey][cat]) || 0;
+  const v = currentBudget[typeKey] && currentBudget[typeKey][cat];
+  if(v == null) return 0;
+  if(typeof v === 'number') return v; // backward-compat with old format (plain number)
+  return v.amount || 0;
+}
+function rawDestination(typeKey, cat){
+  const v = currentBudget[typeKey] && currentBudget[typeKey][cat];
+  if(v == null || typeof v === 'number') return '';
+  return v.destination || '';
 }
 function computeAutoFreeAmount(){
   let plannedIncome = 0;
@@ -751,11 +715,37 @@ function plannedFor(typeKey, cat){
   return rawPlanned(typeKey, cat);
 }
 
+function computeDestinationRekap(){
+  const map = {}; // destination -> { total, items: [{label, amount}] }
+  Object.keys(TYPE_META).forEach(typeKey=>{
+    if(typeKey === 'income') return;
+    (userCategories[typeKey] || []).forEach(cat=>{
+      const dest = rawDestination(typeKey, cat).trim();
+      if(!dest) return;
+      const amount = plannedFor(typeKey, cat);
+      if(!map[dest]) map[dest] = { total: 0, items: [] };
+      map[dest].total += amount;
+      map[dest].items.push({ label: cat, amount });
+    });
+  });
+  return map;
+}
+
 function renderPlanPage(){
   const wrap = document.getElementById('planContent');
   let html = '';
 
   let grandPlanned = 0, grandActual = 0;
+
+  // Kumpulkan daftar rekening yang pernah dipakai, buat autocomplete
+  const destSet = new Set(['DANA','Superbank','Krom Bank','BCA']);
+  Object.keys(TYPE_META).forEach(typeKey=>{
+    (userCategories[typeKey] || []).forEach(cat=>{
+      const d = rawDestination(typeKey, cat);
+      if(d) destSet.add(d);
+    });
+  });
+  const destDatalist = `<datalist id="planDestList">${Array.from(destSet).sort().map(d=>`<option value="${d}"></option>`).join('')}</datalist>`;
 
   Object.keys(TYPE_META).forEach(typeKey=>{
     const meta = TYPE_META[typeKey];
@@ -776,6 +766,7 @@ function renderPlanPage(){
       const planned = plannedFor(typeKey,cat);
       const actual = actualFor(typeKey,cat);
       const isAuto = isAutoFreeCategory(typeKey, cat);
+      const dest = rawDestination(typeKey, cat);
       const diff = isIncome ? (actual - planned) : (planned - actual);
       const diffLabel = isIncome
         ? (diff >= 0 ? `Lebih ${formatRp(diff)}` : `Kurang ${formatRp(Math.abs(diff))}`)
@@ -786,6 +777,10 @@ function renderPlanPage(){
         : `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
               value="${planned ? planned.toLocaleString('id-ID') : ''}" placeholder="0"
               oninput="formatPlanInput(this)" onblur="savePlannedAmount(this)">`;
+      const destFieldHtml = (isIncome || isAuto) ? '' : `
+        <input class="planned-dest-input" list="planDestList" placeholder="Kirim ke rekening (opsional)"
+          data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
+          value="${dest}" onblur="saveCategoryDestination(this)">`;
       html += `<div class="plan-row">
         <div class="prow-top"><span class="prow-cat">${cat}${isAuto ? ' <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis dari sisa budget)</span>' : ''}</span></div>
         <div class="prow-inputs">
@@ -799,17 +794,32 @@ function renderPlanPage(){
           </div>
         </div>
         <div class="prow-diff ${diffClass}">${planned > 0 || actual > 0 ? diffLabel : ''}</div>
+        ${destFieldHtml}
       </div>`;
     });
   });
 
-  const overallDiff = grandPlanned - grandActual; // planned income minus actual expenses... shown separately below
-  wrap.innerHTML = `
+  const rekap = computeDestinationRekap();
+  const rekapEntries = Object.entries(rekap).sort((a,b)=> b[1].total - a[1].total);
+  let rekapHtml = '';
+  if(rekapEntries.length > 0){
+    rekapHtml = `<div class="reserve-card" style="margin-bottom:16px;">
+      <div class="section-label" style="margin:0 0 10px;">Rekap Alokasi per Rekening</div>
+      ${rekapEntries.map(([dest, info])=>`
+        <div style="margin-bottom:10px;">
+          <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;"><span style="font-weight:700; color:var(--navy);">${dest}</span><span style="font-weight:700; color:var(--navy);">${formatRp(info.total)}</span></div>
+          ${info.items.map(it=>`<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:2px 0 2px 4px;"><span>${it.label}</span><span>${formatRp(it.amount)}</span></div>`).join('')}
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  wrap.innerHTML = destDatalist + `
     <div class="plan-summary-card">
       <div class="col"><div class="lbl">Planned Income</div><div class="val">${formatRp(grandPlanned)}</div></div>
       <div class="col"><div class="lbl">Actual Expenses</div><div class="val">${formatRp(grandActual)}</div></div>
     </div>
-  ` + html;
+  ` + rekapHtml + html;
 }
 
 window.formatPlanInput = function(el){
@@ -825,11 +835,28 @@ window.savePlannedAmount = async function(el){
   const amount = parseInt(raw) || 0;
 
   if(!currentBudget[typeKey]) currentBudget[typeKey] = {};
-  currentBudget[typeKey][cat] = amount;
+  const existingDest = rawDestination(typeKey, cat);
+  currentBudget[typeKey][cat] = { amount, destination: existingDest };
 
   const budgetRef = doc(db, 'users', currentUser.uid, 'budgets', periodKey());
   await setDoc(budgetRef, currentBudget, { merge: true });
   showToast('Planned tersimpan ✓');
+  renderPlanPage();
+}
+
+window.saveCategoryDestination = async function(el){
+  const typeKey = el.dataset.type;
+  const cat = el.dataset.cat;
+  const destination = el.value.trim();
+
+  if(!currentBudget[typeKey]) currentBudget[typeKey] = {};
+  const existingAmount = rawPlanned(typeKey, cat);
+  currentBudget[typeKey][cat] = { amount: existingAmount, destination };
+
+  const budgetRef = doc(db, 'users', currentUser.uid, 'budgets', periodKey());
+  await setDoc(budgetRef, currentBudget, { merge: true });
+  showToast(destination ? `Ditandai ke ${destination} ✓` : 'Tanda rekening dihapus');
+  renderPlanPage();
 }
 
 // ---------- CATEGORY MANAGER ----------
