@@ -734,16 +734,18 @@ function getDestinationColor(name){
 }
 
 function computeDestinationRekap(){
-  const map = {}; // destination -> { total, items: [{label, amount}] }
+  const map = {}; // destination -> { total, totalActual, items: [{label, planned, actual}] }
   Object.keys(TYPE_META).forEach(typeKey=>{
     if(typeKey === 'income') return;
     (userCategories[typeKey] || []).forEach(cat=>{
       const dest = rawDestination(typeKey, cat).trim();
       if(!dest) return;
-      const amount = plannedFor(typeKey, cat);
-      if(!map[dest]) map[dest] = { total: 0, items: [] };
-      map[dest].total += amount;
-      map[dest].items.push({ label: cat, amount });
+      const planned = plannedFor(typeKey, cat);
+      const actual = actualFor(typeKey, cat);
+      if(!map[dest]) map[dest] = { total: 0, totalActual: 0, items: [] };
+      map[dest].total += planned;
+      map[dest].totalActual += actual;
+      map[dest].items.push({ label: cat, planned, actual });
     });
   });
   return map;
@@ -833,13 +835,26 @@ function renderPlanPage(){
       <div class="section-label" style="margin:0 0 10px;">Rekap Alokasi per Rekening</div>
       ${rekapEntries.map(([dest, info])=>{
         const col = getDestinationColor(dest);
+        const doneCount = info.items.filter(it => it.planned > 0 && it.actual >= it.planned).length;
         return `
         <div style="margin-bottom:10px;">
           <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;">
             <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${dest}</span>
             <span style="font-weight:700; color:${col};">${formatRp(info.total)}</span>
           </div>
-          ${info.items.map(it=>`<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:2px 0 2px 4px;"><span>${it.label}</span><span>${formatRp(it.amount)}</span></div>`).join('')}
+          <div style="font-size:10px; color:var(--muted); padding-left:15px; margin-bottom:3px;">${doneCount}/${info.items.length} sudah terkirim penuh</div>
+          ${info.items.map(it=>{
+            const isDone = it.planned > 0 && it.actual >= it.planned;
+            const isPartial = !isDone && it.actual > 0;
+            const icon = isDone ? '✓' : (isPartial ? '◐' : '○');
+            const iconColor = isDone ? 'var(--green)' : (isPartial ? 'var(--orange)' : '#C9D2D8');
+            const amtText = isDone ? formatRp(it.planned) : `${formatRp(it.actual)} / ${formatRp(it.planned)}`;
+            const amtColor = isDone ? 'var(--green)' : (isPartial ? '#B8860B' : 'var(--muted)');
+            return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:3px 0 3px 4px;">
+              <span style="display:flex; align-items:center; gap:6px; color:var(--muted);"><span style="color:${iconColor}; font-weight:700; width:12px; display:inline-block;">${icon}</span>${it.label}</span>
+              <span style="color:${amtColor}; font-weight:${isDone ? '700' : '500'};">${amtText}</span>
+            </div>`;
+          }).join('')}
         </div>
         `;
       }).join('')}
