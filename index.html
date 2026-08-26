@@ -715,6 +715,18 @@ function plannedFor(typeKey, cat){
   return rawPlanned(typeKey, cat);
 }
 
+const BANK_BRAND_COLORS = [
+  { match: /dana/i, color: '#118EEA' },
+  { match: /^bca|bank central asia/i, color: '#003D79' },
+  { match: /krom/i, color: '#7B3FF2' },
+  { match: /sea\s*bank/i, color: '#F97316' },
+  { match: /super\s*bank/i, color: '#9ACD32' }
+];
+function getDestinationColor(name){
+  const found = BANK_BRAND_COLORS.find(b => b.match.test(name));
+  return found ? found.color : '#1B4965';
+}
+
 function computeDestinationRekap(){
   const map = {}; // destination -> { total, items: [{label, amount}] }
   Object.keys(TYPE_META).forEach(typeKey=>{
@@ -805,12 +817,18 @@ function renderPlanPage(){
   if(rekapEntries.length > 0){
     rekapHtml = `<div class="reserve-card" style="margin-bottom:16px;">
       <div class="section-label" style="margin:0 0 10px;">Rekap Alokasi per Rekening</div>
-      ${rekapEntries.map(([dest, info])=>`
+      ${rekapEntries.map(([dest, info])=>{
+        const col = getDestinationColor(dest);
+        return `
         <div style="margin-bottom:10px;">
-          <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;"><span style="font-weight:700; color:var(--navy);">${dest}</span><span style="font-weight:700; color:var(--navy);">${formatRp(info.total)}</span></div>
+          <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;">
+            <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${dest}</span>
+            <span style="font-weight:700; color:${col};">${formatRp(info.total)}</span>
+          </div>
           ${info.items.map(it=>`<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:2px 0 2px 4px;"><span>${it.label}</span><span>${formatRp(it.amount)}</span></div>`).join('')}
         </div>
-      `).join('')}
+        `;
+      }).join('')}
     </div>`;
   }
 
