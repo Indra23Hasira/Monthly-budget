@@ -765,6 +765,8 @@ function renderPlanPage(){
   });
   const destDatalist = `<datalist id="planDestList">${Array.from(destSet).sort().map(d=>`<option value="${d}"></option>`).join('')}</datalist>`;
 
+  let sisaFreeRowHtml = '';
+
   Object.keys(TYPE_META).forEach(typeKey=>{
     const meta = TYPE_META[typeKey];
     const cats = userCategories[typeKey] || [];
@@ -799,7 +801,7 @@ function renderPlanPage(){
         <input class="planned-dest-input" list="planDestList" placeholder="Kirim ke rekening (opsional)"
           data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
           value="${dest}" onblur="saveCategoryDestination(this)">`;
-      html += `<div class="plan-row">
+      const rowHtml = `<div class="plan-row">
         <div class="prow-top"><span class="prow-cat">${cat}${isAuto ? ' <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis dari sisa budget)</span>' : ''}</span></div>
         <div class="prow-inputs">
           <div style="flex:1;">
@@ -814,6 +816,12 @@ function renderPlanPage(){
         <div class="prow-diff ${diffClass}">${planned > 0 || actual > 0 ? diffLabel : ''}</div>
         ${destFieldHtml}
       </div>`;
+
+      if(isAuto){
+        sisaFreeRowHtml = rowHtml; // tampilkan terpisah, di bawah rekap rekening
+      } else {
+        html += rowHtml;
+      }
     });
   });
 
@@ -838,12 +846,20 @@ function renderPlanPage(){
     </div>`;
   }
 
+  let sisaFreeCardHtml = '';
+  if(sisaFreeRowHtml){
+    sisaFreeCardHtml = `<div class="reserve-card" style="margin-bottom:16px;">
+      <div class="section-label" style="margin:0 0 4px;">Sisa Uang Free Bulan Ini</div>
+      ${sisaFreeRowHtml}
+    </div>`;
+  }
+
   wrap.innerHTML = destDatalist + `
     <div class="plan-summary-card">
       <div class="col"><div class="lbl">Planned Income</div><div class="val">${formatRp(grandPlanned)}</div></div>
       <div class="col"><div class="lbl">Actual Expenses</div><div class="val">${formatRp(grandActual)}</div></div>
     </div>
-  ` + rekapHtml + html;
+  ` + rekapHtml + sisaFreeCardHtml + html;
 }
 
 window.formatPlanInput = function(el){
