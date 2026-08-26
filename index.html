@@ -50,10 +50,13 @@
   .overview-card{background:var(--card); border-radius:18px; padding:18px 14px; text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.05); margin-bottom:14px;}
   .overview-amount-label{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;}
   .overview-amount{font-size:26px; font-weight:700; color:var(--navy); margin:4px 0 14px;}
-  .overview-row{display:flex; justify-content:center; align-items:flex-start; gap:18px; flex-wrap:wrap;}
-  .overview-col{display:flex; flex-direction:column; align-items:center; width:82px;}
-  .chart-mini{width:78px; height:78px; position:relative;}
+  .overview-row{display:flex; justify-content:center; align-items:flex-start; gap:18px; flex-wrap:wrap; margin-bottom:16px;}
+  .overview-col{display:flex; flex-direction:column; align-items:center; width:90px;}
+  .chart-mini{width:88px; height:88px; position:relative;}
   .overview-col h4{font-size:9px; color:var(--muted); font-weight:600; text-transform:uppercase; margin-top:6px; line-height:1.3; text-align:center;}
+  .overview-bar-wrap{display:flex; flex-direction:column; align-items:center;}
+  .chart-mini-wide{width:100%; height:90px; position:relative;}
+  .overview-bar-wrap h4{font-size:9px; color:var(--muted); font-weight:600; text-transform:uppercase; margin-top:6px;}
   .summary-grid{display:grid; gap:10px;}
   .summary-card{background:var(--card); border-radius:14px; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 2px 8px rgba(0,0,0,0.04);}
   .summary-card .stype{font-weight:600; font-size:14px;}
@@ -184,13 +187,13 @@
             <h4>Sisa vs Terpakai</h4>
           </div>
           <div class="overview-col">
-            <div class="chart-mini"><canvas id="barChart"></canvas></div>
-            <h4>Planned vs Actual</h4>
-          </div>
-          <div class="overview-col">
             <div class="chart-mini"><canvas id="donutChart"></canvas></div>
             <h4>Expenses Breakdown</h4>
           </div>
+        </div>
+        <div class="overview-bar-wrap">
+          <div class="chart-mini-wide"><canvas id="barChart"></canvas></div>
+          <h4>Planned vs Actual</h4>
         </div>
       </div>
 
@@ -636,13 +639,13 @@ function renderDashboard(){
   barChartInstance = new Chart(barCtx, {
     type:'bar',
     data:{
-      labels:['Inc','Fix','Var','Sav','Dbt'],
+      labels:['Income','Fixed','Variable','Savings','Debts'],
       datasets:[
         { label:'Planned', data:plannedVals, backgroundColor:'#C9D6DD' },
         { label:'Actual', data:actualVals, backgroundColor:['#7FB88A','#F6C6C0','#F4B860','#8FC1D6','#E0575B'] }
       ]
     },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:7}}}, y:{display:false}} }
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:9}}}, y:{display:false}} }
   });
 
   // Donut breakdown (fixed/variable/savings/debts only)
