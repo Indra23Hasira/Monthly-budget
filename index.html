@@ -179,6 +179,10 @@
         <div class="amount" id="leftToSpend">Rp0</div>
         <canvas id="ringChart" height="140"></canvas>
       </div>
+
+      <div id="rekapAlokasiCard"></div>
+      <div id="sisaFreeCard"></div>
+
       <div class="charts-row">
         <div class="chart-card"><h3>Planned vs Actual</h3><canvas id="barChart"></canvas></div>
         <div class="chart-card"><h3>Expenses Breakdown</h3><canvas id="donutChart"></canvas></div>
@@ -592,6 +596,9 @@ function renderDashboard(){
   document.getElementById('leftToSpend').textContent = formatRp(left);
   document.getElementById('leftToSpend').style.color = left < 0 ? '#E0575B' : '#1B4965';
 
+  document.getElementById('rekapAlokasiCard').innerHTML = buildRekapAlokasiHtml();
+  document.getElementById('sisaFreeCard').innerHTML = buildSisaFreeHtml();
+
   // Ring chart (spent vs left, based on income as total)
   const spent = fixed+variable+savings+debts;
   const total = income > 0 ? income : (spent || 1);
@@ -751,6 +758,62 @@ function computeDestinationRekap(){
   return map;
 }
 
+function buildRekapAlokasiHtml(){
+  const rekap = computeDestinationRekap();
+  const rekapEntries = Object.entries(rekap).sort((a,b)=> b[1].total - a[1].total);
+  if(rekapEntries.length === 0) return '';
+  return `<div class="reserve-card" style="margin-bottom:14px;">
+    <div class="section-label" style="margin:0 0 10px;">Rekap Alokasi per Rekening</div>
+    ${rekapEntries.map(([dest, info])=>{
+      const col = getDestinationColor(dest);
+      const doneCount = info.items.filter(it => it.planned > 0 && it.actual >= it.planned).length;
+      return `
+      <div style="margin-bottom:10px;">
+        <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;">
+          <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${dest}</span>
+          <span style="font-weight:700; color:${col};">${formatRp(info.total)}</span>
+        </div>
+        <div style="font-size:10px; color:var(--muted); padding-left:15px; margin-bottom:3px;">${doneCount}/${info.items.length} sudah terkirim penuh</div>
+        ${info.items.map(it=>{
+          const isDone = it.planned > 0 && it.actual >= it.planned;
+          const isPartial = !isDone && it.actual > 0;
+          const icon = isDone ? '✓' : (isPartial ? '◐' : '○');
+          const iconColor = isDone ? 'var(--green)' : (isPartial ? 'var(--orange)' : '#C9D2D8');
+          const amtText = isDone ? formatRp(it.planned) : `${formatRp(it.actual)} / ${formatRp(it.planned)}`;
+          const amtColor = isDone ? 'var(--green)' : (isPartial ? '#B8860B' : 'var(--muted)');
+          return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:3px 0 3px 4px;">
+            <span style="display:flex; align-items:center; gap:6px; color:var(--muted);"><span style="color:${iconColor}; font-weight:700; width:12px; display:inline-block;">${icon}</span>${it.label}</span>
+            <span style="color:${amtColor}; font-weight:${isDone ? '700' : '500'};">${amtText}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      `;
+    }).join('')}
+  </div>`;
+}
+
+function buildSisaFreeHtml(){
+  const cats = userCategories.variableExpenses || [];
+  const freeCat = cats.find(c => isAutoFreeCategory('variableExpenses', c));
+  if(!freeCat) return '';
+  const planned = plannedFor('variableExpenses', freeCat);
+  const actual = actualFor('variableExpenses', freeCat);
+  const diff = planned - actual;
+  const diffLabel = diff >= 0 ? `Sisa ${formatRp(diff)}` : `Over ${formatRp(Math.abs(diff))}`;
+  const diffClass = diff >= 0 ? 'under' : 'over';
+  return `<div class="reserve-card" style="margin-bottom:14px;">
+    <div class="section-label" style="margin:0 0 4px;">Sisa Uang Free Bulan Ini</div>
+    <div class="plan-row" style="box-shadow:none; background:transparent; padding:6px 0 0;">
+      <div class="prow-top"><span class="prow-cat">${freeCat} <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis dari sisa budget)</span></span></div>
+      <div class="prow-inputs">
+        <div style="flex:1;"><label>Planned (auto)</label><div class="prow-actual" style="color:var(--navy); font-weight:700;">${formatRp(planned)}</div></div>
+        <div style="flex:1;"><label>Actual</label><div class="prow-actual">${formatRp(actual)}</div></div>
+      </div>
+      <div class="prow-diff ${diffClass}">${planned > 0 || actual > 0 ? diffLabel : ''}</div>
+    </div>
+  </div>`;
+}
+
 function renderPlanPage(){
   const wrap = document.getElementById('planContent');
   let html = '';
@@ -766,8 +829,6 @@ function renderPlanPage(){
     });
   });
   const destDatalist = `<datalist id="planDestList">${Array.from(destSet).sort().map(d=>`<option value="${d}"></option>`).join('')}</datalist>`;
-
-  let sisaFreeRowHtml = '';
 
   Object.keys(TYPE_META).forEach(typeKey=>{
     const meta = TYPE_META[typeKey];
@@ -785,29 +846,29 @@ function renderPlanPage(){
     </div>`;
 
     cats.forEach(cat=>{
+      const isAuto = isAutoFreeCategory(typeKey, cat);
+      if(isAuto) return; // sekarang ditampilkan di Dashboard, bukan di sini
+
       const planned = plannedFor(typeKey,cat);
       const actual = actualFor(typeKey,cat);
-      const isAuto = isAutoFreeCategory(typeKey, cat);
       const dest = rawDestination(typeKey, cat);
       const diff = isIncome ? (actual - planned) : (planned - actual);
       const diffLabel = isIncome
         ? (diff >= 0 ? `Lebih ${formatRp(diff)}` : `Kurang ${formatRp(Math.abs(diff))}`)
         : (diff >= 0 ? `Sisa ${formatRp(diff)}` : `Over ${formatRp(Math.abs(diff))}`);
       const diffClass = diff >= 0 ? 'under' : 'over';
-      const plannedFieldHtml = isAuto
-        ? `<div class="prow-actual" style="color:var(--navy); font-weight:700;">${formatRp(planned)}</div>`
-        : `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
+      const plannedFieldHtml = `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
               value="${planned ? planned.toLocaleString('id-ID') : ''}" placeholder="0"
               oninput="formatPlanInput(this)" onblur="savePlannedAmount(this)">`;
-      const destFieldHtml = (isIncome || isAuto) ? '' : `
+      const destFieldHtml = isIncome ? '' : `
         <input class="planned-dest-input" list="planDestList" placeholder="Kirim ke rekening (opsional)"
           data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
           value="${dest}" onblur="saveCategoryDestination(this)">`;
-      const rowHtml = `<div class="plan-row">
-        <div class="prow-top"><span class="prow-cat">${cat}${isAuto ? ' <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis dari sisa budget)</span>' : ''}</span></div>
+      html += `<div class="plan-row">
+        <div class="prow-top"><span class="prow-cat">${cat}</span></div>
         <div class="prow-inputs">
           <div style="flex:1;">
-            <label>${isAuto ? 'Planned (auto)' : 'Planned'}</label>
+            <label>Planned</label>
             ${plannedFieldHtml}
           </div>
           <div style="flex:1;">
@@ -818,63 +879,15 @@ function renderPlanPage(){
         <div class="prow-diff ${diffClass}">${planned > 0 || actual > 0 ? diffLabel : ''}</div>
         ${destFieldHtml}
       </div>`;
-
-      if(isAuto){
-        sisaFreeRowHtml = rowHtml; // tampilkan terpisah, di bawah rekap rekening
-      } else {
-        html += rowHtml;
-      }
     });
   });
-
-  const rekap = computeDestinationRekap();
-  const rekapEntries = Object.entries(rekap).sort((a,b)=> b[1].total - a[1].total);
-  let rekapHtml = '';
-  if(rekapEntries.length > 0){
-    rekapHtml = `<div class="reserve-card" style="margin-bottom:16px;">
-      <div class="section-label" style="margin:0 0 10px;">Rekap Alokasi per Rekening</div>
-      ${rekapEntries.map(([dest, info])=>{
-        const col = getDestinationColor(dest);
-        const doneCount = info.items.filter(it => it.planned > 0 && it.actual >= it.planned).length;
-        return `
-        <div style="margin-bottom:10px;">
-          <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;">
-            <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${dest}</span>
-            <span style="font-weight:700; color:${col};">${formatRp(info.total)}</span>
-          </div>
-          <div style="font-size:10px; color:var(--muted); padding-left:15px; margin-bottom:3px;">${doneCount}/${info.items.length} sudah terkirim penuh</div>
-          ${info.items.map(it=>{
-            const isDone = it.planned > 0 && it.actual >= it.planned;
-            const isPartial = !isDone && it.actual > 0;
-            const icon = isDone ? '✓' : (isPartial ? '◐' : '○');
-            const iconColor = isDone ? 'var(--green)' : (isPartial ? 'var(--orange)' : '#C9D2D8');
-            const amtText = isDone ? formatRp(it.planned) : `${formatRp(it.actual)} / ${formatRp(it.planned)}`;
-            const amtColor = isDone ? 'var(--green)' : (isPartial ? '#B8860B' : 'var(--muted)');
-            return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:3px 0 3px 4px;">
-              <span style="display:flex; align-items:center; gap:6px; color:var(--muted);"><span style="color:${iconColor}; font-weight:700; width:12px; display:inline-block;">${icon}</span>${it.label}</span>
-              <span style="color:${amtColor}; font-weight:${isDone ? '700' : '500'};">${amtText}</span>
-            </div>`;
-          }).join('')}
-        </div>
-        `;
-      }).join('')}
-    </div>`;
-  }
-
-  let sisaFreeCardHtml = '';
-  if(sisaFreeRowHtml){
-    sisaFreeCardHtml = `<div class="reserve-card" style="margin-bottom:16px;">
-      <div class="section-label" style="margin:0 0 4px;">Sisa Uang Free Bulan Ini</div>
-      ${sisaFreeRowHtml}
-    </div>`;
-  }
 
   wrap.innerHTML = destDatalist + `
     <div class="plan-summary-card">
       <div class="col"><div class="lbl">Planned Income</div><div class="val">${formatRp(grandPlanned)}</div></div>
       <div class="col"><div class="lbl">Actual Expenses</div><div class="val">${formatRp(grandActual)}</div></div>
     </div>
-  ` + rekapHtml + sisaFreeCardHtml + html;
+  ` + html;
 }
 
 window.formatPlanInput = function(el){
@@ -897,6 +910,7 @@ window.savePlannedAmount = async function(el){
   await setDoc(budgetRef, currentBudget, { merge: true });
   showToast('Planned tersimpan ✓');
   renderPlanPage();
+  renderDashboard();
 }
 
 window.saveCategoryDestination = async function(el){
@@ -912,6 +926,7 @@ window.saveCategoryDestination = async function(el){
   await setDoc(budgetRef, currentBudget, { merge: true });
   showToast(destination ? `Ditandai ke ${destination} ✓` : 'Tanda rekening dihapus');
   renderPlanPage();
+  renderDashboard();
 }
 
 // ---------- CATEGORY MANAGER ----------
@@ -948,6 +963,7 @@ window.moveCategory = async function(type, idx, dir){
   renderCatMgr();
   renderCatChips();
   renderPlanPage();
+  renderDashboard();
 }
 
 window.renameCategory = async function(type, idx){
@@ -987,6 +1003,7 @@ window.renameCategory = async function(type, idx){
   renderCatMgr();
   renderCatChips();
   loadPeriodData();
+  renderDashboard();
   showToast('Nama kategori diganti, data lama ikut dipindahkan ✓');
 }
 
@@ -1007,6 +1024,7 @@ window.addCategory = async function(){
   renderCatMgr();
   renderCatChips();
   renderPlanPage();
+  renderDashboard();
   showToast('Kategori ditambahkan');
 }
 
@@ -1014,6 +1032,8 @@ window.removeCategory = async function(type, idx){
   userCategories[type].splice(idx,1);
   await saveCategories();
   renderCatMgr();
+  renderPlanPage();
+  renderDashboard();
   showToast('Kategori dihapus');
 }
 
