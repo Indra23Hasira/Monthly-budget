@@ -234,7 +234,8 @@
       <input type="tel" inputmode="numeric" class="amount-input" id="amountInput" placeholder="Rp0" oninput="formatAmountInput(this)">
       <input class="input-field" id="detailsInput" placeholder="Catatan (opsional)">
       <input class="input-field" id="dateInput" type="date">
-      <button class="btn-primary" onclick="saveTransaction()">Simpan Transaksi</button>
+      <button class="btn-primary" id="saveTxBtn" onclick="saveTransaction()">Simpan Transaksi</button>
+      <div class="auth-toggle" id="cancelEditLink" style="display:none; text-align:center;" onclick="startNewTransaction()">Batal edit, buat transaksi baru</div>
     </div>
 
     <!-- TRANSACTIONS PAGE -->
@@ -275,7 +276,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
         Riwayat
       </button>
-      <button class="fab-add" onclick="goPage('add')">+</button>
+      <button class="fab-add" onclick="startNewTransaction()">+</button>
       <button class="navbtn" data-page="plan" onclick="goPage('plan')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8M21 12a9 9 0 11-9-9"/></svg>
         Plan
@@ -531,6 +532,44 @@ function periodRangeLabel(year, month){
   return `${CYCLE_CUTOFF_DAY} ${MONTH_NAMES_ID[startMonth-1].slice(0,3)} – ${CYCLE_CUTOFF_DAY-1} ${MONTH_NAMES_ID[month-1].slice(0,3)}`;
 }
 
+let editingTxId = null;
+
+window.startNewTransaction = function(){
+  editingTxId = null;
+  document.getElementById('amountInput').value = '';
+  document.getElementById('amountInput').dataset.raw = '';
+  document.getElementById('detailsInput').value = '';
+  document.getElementById('dateInput').valueAsDate = new Date();
+  selectedType = null; selectedCategory = null;
+  document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('selected'));
+  document.getElementById('catChips').innerHTML = '';
+  document.getElementById('saveTxBtn').textContent = 'Simpan Transaksi';
+  document.getElementById('cancelEditLink').style.display = 'none';
+  goPage('add');
+}
+
+window.editTransaction = function(id){
+  const t = allTransactions.find(tx => tx.id === id);
+  if(!t) return;
+  editingTxId = id;
+
+  selectType(t.type);
+  document.querySelectorAll('#catChips .chip').forEach(btn=>{
+    if(btn.textContent.trim() === t.category){
+      btn.classList.add('selected');
+      selectedCategory = t.category;
+    }
+  });
+
+  document.getElementById('amountInput').value = Number(t.amount).toLocaleString('id-ID');
+  document.getElementById('amountInput').dataset.raw = String(t.amount);
+  document.getElementById('detailsInput').value = t.details || '';
+  document.getElementById('dateInput').value = t.date || '';
+  document.getElementById('saveTxBtn').textContent = 'Update Transaksi';
+  document.getElementById('cancelEditLink').style.display = 'block';
+  goPage('add');
+}
+
 window.saveTransaction = async function(){
   if(!selectedType){ showToast('Pilih jenis transaksi dulu'); return; }
   if(!selectedCategory){ showToast('Pilih kategori dulu'); return; }
@@ -540,23 +579,24 @@ window.saveTransaction = async function(){
   const details = document.getElementById('detailsInput').value.trim();
   const dateVal = document.getElementById('dateInput').value;
 
-  await addDoc(collection(db, 'users', currentUser.uid, 'transactions'), {
+  const payload = {
     type: selectedType,
     category: selectedCategory,
     amount: amount,
     details: details,
     date: dateVal,
-    periodKey: dateToPeriod(dateVal),
-    createdAt: serverTimestamp()
-  });
+    periodKey: dateToPeriod(dateVal)
+  };
 
-  document.getElementById('amountInput').value = '';
-  document.getElementById('amountInput').dataset.raw = '';
-  document.getElementById('detailsInput').value = '';
-  selectedType = null; selectedCategory = null;
-  document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('selected'));
-  document.getElementById('catChips').innerHTML = '';
-  showToast('Transaksi tersimpan ✓');
+  if(editingTxId){
+    await updateDoc(doc(db, 'users', currentUser.uid, 'transactions', editingTxId), payload);
+    showToast('Transaksi diupdate ✓');
+  } else {
+    await addDoc(collection(db, 'users', currentUser.uid, 'transactions'), { ...payload, createdAt: serverTimestamp() });
+    showToast('Transaksi tersimpan ✓');
+  }
+
+  startNewTransaction();
   goPage('dashboard');
 }
 
@@ -693,9 +733,10 @@ function renderTxList(){
           <div class="tx-date">${t.date || ''}${t.details ? ' · '+t.details : ''}</div>
         </div>
       </div>
-      <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
         <div class="tx-amt ${cls}">${sign}${formatRp(t.amount)}</div>
-        <button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:#ccc;font-size:16px;">✕</button>
+        <button onclick="editTransaction('${t.id}')" style="background:none;border:none;color:var(--navy);font-size:15px;padding:4px;">✎</button>
+        <button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:#ccc;font-size:16px;padding:4px;">✕</button>
       </div>
     </div>`;
   }).join('');
