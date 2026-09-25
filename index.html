@@ -788,6 +788,53 @@ function plannedFor(typeKey, cat){
   return rawPlanned(typeKey, cat);
 }
 
+// ---------- SALIN PLANNED DARI PERIODE SEBELUMNYA ----------
+// Setiap periode gajian punya dokumen budgets/{periodKey} sendiri di Firestore, jadi
+// periode baru selalu mulai dari kosong (Planned = 0 semua, termasuk Planned Income) sampai
+// diisi manual. Tombol ini menyalin nilai Planned + tujuan rekening dari periode sebelumnya,
+// tapi hanya untuk kategori yang di periode ini masih kosong (tidak menimpa yang sudah diisi).
+function previousPeriodKey(){
+  let y = currentPeriod.year, m = currentPeriod.month - 1;
+  if(m < 1){ m = 12; y -= 1; }
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+
+window.copyPlanFromPreviousPeriod = async function(){
+  const prevKey = previousPeriodKey();
+  const prevRef = doc(db, 'users', currentUser.uid, 'budgets', prevKey);
+  const prevSnap = await getDoc(prevRef);
+  if(!prevSnap.exists()){
+    showToast(`Belum ada Planned tersimpan di periode ${prevKey}`);
+    return;
+  }
+  const prevData = prevSnap.data();
+  let filled = 0;
+  Object.keys(prevData).forEach(typeKey=>{
+    if(!currentBudget[typeKey]) currentBudget[typeKey] = {};
+    Object.keys(prevData[typeKey] || {}).forEach(cat=>{
+      const alreadyAmount = rawPlanned(typeKey, cat);
+      if(!alreadyAmount){
+        const prevVal = prevData[typeKey][cat];
+        const prevAmount = typeof prevVal === 'number' ? prevVal : (prevVal && prevVal.amount) || 0;
+        const prevDest = typeof prevVal === 'number' ? '' : (prevVal && prevVal.destination) || '';
+        if(prevAmount){
+          currentBudget[typeKey][cat] = { amount: prevAmount, destination: prevDest };
+          filled++;
+        }
+      }
+    });
+  });
+  if(filled === 0){
+    showToast('Semua kategori bulan ini sudah ada Planned-nya, atau bulan lalu kosong');
+    return;
+  }
+  const budgetRef = doc(db, 'users', currentUser.uid, 'budgets', periodKey());
+  await setDoc(budgetRef, currentBudget, { merge: true });
+  showToast(`Planned disalin dari ${prevKey} (${filled} kategori) ✓`);
+  renderPlanPage();
+  renderDashboard();
+}
+
 const BANK_BRAND_COLORS = [
   { match: /dana/i, color: '#118EEA' },
   { match: /^bca|bank central asia/i, color: '#003D79' },
@@ -949,6 +996,7 @@ function renderPlanPage(){
       <div class="col"><div class="lbl">Planned Income</div><div class="val">${formatRp(grandPlanned)}</div></div>
       <div class="col"><div class="lbl">Actual Expenses</div><div class="val">${formatRp(grandActual)}</div></div>
     </div>
+    <button class="btn-primary" style="background:var(--orange); color:var(--navy); margin-bottom:16px;" onclick="copyPlanFromPreviousPeriod()">Salin Planned dari Bulan Lalu</button>
   ` + html;
 }
 
