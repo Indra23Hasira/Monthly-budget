@@ -765,7 +765,7 @@ function rawDestination(typeKey, cat){
   if(v == null || typeof v === 'number') return '';
   return v.destination || '';
 }
-function computeAutoFreeAmount(){
+function computeAutoFreeRaw(){
   let plannedIncome = 0;
   (userCategories.income || []).forEach(c => plannedIncome += rawPlanned('income', c));
   let actualIncome = 0;
@@ -781,7 +781,10 @@ function computeAutoFreeAmount(){
       plannedOther += rawPlanned(typeKey, c);
     });
   });
-  return Math.max(incomeBase - plannedOther, 0);
+  return incomeBase - plannedOther; // bisa negatif kalau planned kategori lain > income
+}
+function computeAutoFreeAmount(){
+  return Math.max(computeAutoFreeRaw(), 0);
 }
 function plannedFor(typeKey, cat){
   if(isAutoFreeCategory(typeKey, cat)) return computeAutoFreeAmount();
@@ -903,17 +906,24 @@ function buildSisaFreeHtml(){
   const cats = userCategories.variableExpenses || [];
   const freeCat = cats.find(c => isAutoFreeCategory('variableExpenses', c));
   if(!freeCat) return '';
-  const planned = plannedFor('variableExpenses', freeCat);
+  const rawFree = computeAutoFreeRaw();
+  const planned = Math.max(rawFree, 0);
   const actual = actualFor('variableExpenses', freeCat);
   const actualForIncome = (userCategories.income || []).reduce((s,c)=> s + actualFor('income', c), 0);
   const diff = planned - actual;
   const diffLabel = diff >= 0 ? `Sisa ${formatRp(diff)}` : `Over ${formatRp(Math.abs(diff))}`;
   const diffClass = diff >= 0 ? 'under' : 'over';
+  // Kalau rawFree negatif, planned kategori lain (di semua tipe, bukan cuma yang ada tag rekening)
+  // sudah melebihi income — jadi bukan "belum keisi", tapi memang sudah habis/over sebelum sempat pakai bebas.
+  const overBudgetWarning = rawFree < 0
+    ? `<div style="font-size:11px; color:var(--red); margin:2px 0 6px; font-weight:600;">⚠ Planned kategori lain sudah melebihi income sebesar ${formatRp(Math.abs(rawFree))} — makanya Sisa Uang Free jadi Rp0, bukan kosong/belum keisi. Cek Plan untuk kurangi salah satu Planned.</div>`
+    : '';
   return `<div class="reserve-card" style="margin-bottom:14px;">
     <div class="section-label" style="margin:0 0 4px;">Sisa Uang Free Bulan Ini</div>
     <div class="plan-row" style="box-shadow:none; background:transparent; padding:6px 0 0;">
       <div class="prow-top"><span class="prow-cat">${freeCat} <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis: gaji actual − planned kategori lain)</span></span></div>
       <div style="font-size:10px; color:var(--muted); margin:-2px 0 6px;">${actualForIncome > 0 ? 'Pakai Actual Income bulan ini' : 'Belum ada Actual Income, sementara pakai Planned Income'}</div>
+      ${overBudgetWarning}
       <div class="prow-inputs">
         <div style="flex:1;"><label>Planned (auto)</label><div class="prow-actual" style="color:var(--navy); font-weight:700;">${formatRp(planned)}</div></div>
         <div style="flex:1;"><label>Actual</label><div class="prow-actual">${formatRp(actual)}</div></div>
