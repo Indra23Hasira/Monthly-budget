@@ -40,6 +40,13 @@
   .auth-divider{display:flex; align-items:center; text-align:center; color:var(--muted); font-size:12px; margin-bottom:16px;}
   .auth-divider::before, .auth-divider::after{content:''; flex:1; border-bottom:1px solid #E1E8ED;}
   .auth-divider span{padding:0 12px;}
+  .auth-info{color:#2e7d32; font-size:13px; margin-bottom:10px; line-height:1.4;}
+  .auth-info:empty{display:none;}
+  .auth-forgot{margin-top:14px; color:var(--muted); font-size:13px; cursor:pointer;}
+  .pw-card{background:var(--card); border-radius:14px; padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,0.05); margin-bottom:14px;}
+  .pw-head{display:flex; justify-content:space-between; align-items:center; font-size:14px; font-weight:600; color:var(--navy); cursor:pointer;}
+  .pw-note{font-size:12px; color:var(--muted); margin-bottom:10px; line-height:1.4;}
+  .pw-card .auth-forgot{text-align:center;}
 
   /* Pages */
   .page{display:none; padding:16px; animation:fadein .2s ease;}
@@ -151,6 +158,7 @@
     <h2>Monthly Budget</h2>
     <p>Masuk untuk sync data ke semua device kamu</p>
     <div class="auth-error" id="authError"></div>
+    <div class="auth-info" id="authInfo"></div>
     <button class="btn-google" onclick="doGoogleAuth()">
       <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.6 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34.6 5.1 29.6 3 24 3 16.3 3 9.7 7.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 45c5.5 0 10.4-1.9 14.2-5.1l-6.6-5.4c-2 1.4-4.6 2.4-7.6 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 40.6 16.3 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.6 5.4C41.4 36 45 30.5 45 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
       Masuk dengan Google
@@ -159,6 +167,7 @@
     <input class="input-field" type="email" id="authEmail" placeholder="Email" autocomplete="email">
     <input class="input-field" type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
     <button class="btn-primary" id="authSubmitBtn" onclick="doAuth()">Masuk</button>
+    <div class="auth-forgot" id="authForgot" onclick="doForgotPassword()">Lupa password?</div>
     <div class="auth-toggle" onclick="toggleAuthMode()" id="authToggle">Belum punya akun? Daftar</div>
   </div>
 
@@ -264,6 +273,21 @@
       <button class="btn-primary" style="background:var(--blue); color:var(--navy); margin-bottom:20px;" onclick="exportCSV()">Export Semua Transaksi ke CSV</button>
       <div class="section-label">Akun</div>
       <div style="font-size:13px; color:var(--muted); margin-bottom:10px;" id="userEmailDisplay"></div>
+      <div class="pw-card">
+        <div class="pw-head" onclick="togglePasswordPanel()">
+          <span id="pwPanelTitle">🔒 Ganti Password</span><span id="pwPanelArrow">▾</span>
+        </div>
+        <div id="pwPanel" style="display:none; margin-top:12px;">
+          <div class="pw-note" id="pwGoogleNote" style="display:none;">Akun ini masuk via Google dan belum punya password. Buat password supaya bisa masuk pakai email + password juga (Google tetap bisa dipakai).</div>
+          <input class="input-field" type="password" id="pwCurrent" placeholder="Password lama" autocomplete="current-password">
+          <input class="input-field" type="password" id="pwNew" placeholder="Password baru (min. 6 karakter)" autocomplete="new-password">
+          <input class="input-field" type="password" id="pwConfirm" placeholder="Ulangi password baru" autocomplete="new-password">
+          <div class="auth-error" id="pwError"></div>
+          <div class="auth-info" id="pwInfo"></div>
+          <button class="btn-primary" id="pwSubmitBtn" onclick="submitPasswordChange()">Simpan Password Baru</button>
+          <div class="auth-forgot" id="pwForgotLink" onclick="sendResetToMe()">Lupa password lama? Kirim link reset ke email saya</div>
+        </div>
+      </div>
       <button class="btn-primary" style="background:var(--red);" onclick="signOutUser()">Keluar</button>
     </div>
 
@@ -295,7 +319,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup
+  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup,
+  sendPasswordResetEmail, updatePassword, reauthenticateWithCredential,
+  EmailAuthProvider, linkWithCredential
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
@@ -316,6 +342,7 @@ const firebaseConfig = {
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
+auth.languageCode = 'id'; // email reset password dari Firebase pakai Bahasa Indonesia
 const db = getFirestore(fbApp);
 
 let currentUser = null;
@@ -384,7 +411,9 @@ window.toggleAuthMode = function(){
   isRegisterMode = !isRegisterMode;
   document.getElementById('authSubmitBtn').textContent = isRegisterMode ? "Daftar" : "Masuk";
   document.getElementById('authToggle').textContent = isRegisterMode ? "Sudah punya akun? Masuk" : "Belum punya akun? Daftar";
+  document.getElementById('authForgot').style.display = isRegisterMode ? 'none' : 'block';
   document.getElementById('authError').textContent = '';
+  document.getElementById('authInfo').textContent = '';
 }
 
 window.doAuth = async function(){
@@ -392,6 +421,7 @@ window.doAuth = async function(){
   const password = document.getElementById('authPassword').value;
   const errEl = document.getElementById('authError');
   errEl.textContent = '';
+  document.getElementById('authInfo').textContent = '';
   if(!email || !password){ errEl.textContent = 'Isi email dan password.'; return; }
   try{
     if(isRegisterMode){
@@ -426,12 +456,126 @@ function translateAuthError(code){
     'auth/weak-password':'Password minimal 6 karakter.',
     'auth/invalid-credential':'Email atau password salah.',
     'auth/popup-blocked':'Popup diblokir browser, coba izinkan popup lalu ulangi.',
-    'auth/unauthorized-domain':'Domain ini belum diizinkan di Firebase Authentication.'
+    'auth/unauthorized-domain':'Domain ini belum diizinkan di Firebase Authentication.',
+    'auth/missing-email':'Isi email dulu.',
+    'auth/missing-password':'Isi password.',
+    'auth/too-many-requests':'Terlalu banyak percobaan. Tunggu beberapa menit lalu coba lagi.',
+    'auth/network-request-failed':'Koneksi internet bermasalah. Coba lagi.',
+    'auth/requires-recent-login':'Demi keamanan, keluar lalu masuk lagi, kemudian ulangi.',
+    'auth/provider-already-linked':'Akun ini sudah punya password.',
+    'auth/credential-already-in-use':'Email ini sudah dipakai akun lain.',
+    'auth/user-disabled':'Akun ini dinonaktifkan.'
   };
   return map[code] || 'Terjadi kesalahan. Coba lagi.';
 }
 
 window.signOutUser = function(){ signOut(auth); }
+
+// ---------- PASSWORD: LUPA / GANTI / BUAT ----------
+window.doForgotPassword = async function(){
+  const emailEl = document.getElementById('authEmail');
+  const email = emailEl.value.trim();
+  const errEl = document.getElementById('authError');
+  const infoEl = document.getElementById('authInfo');
+  errEl.textContent = ''; infoEl.textContent = '';
+  if(!email){
+    errEl.textContent = 'Ketik email kamu dulu di kolom Email, lalu klik "Lupa password?" lagi.';
+    emailEl.focus();
+    return;
+  }
+  try{
+    await sendPasswordResetEmail(auth, email);
+    infoEl.textContent = `Link reset password sudah dikirim ke ${email} (kalau email ini terdaftar). Cek inbox atau folder Spam, klik link-nya, buat password baru, lalu masuk lagi di sini.`;
+  } catch(e){
+    errEl.textContent = translateAuthError(e.code);
+  }
+}
+
+function hasPasswordProvider(user){
+  return !!user && user.providerData.some(p => p.providerId === 'password');
+}
+
+function applyPasswordPanelMode(){
+  if(!currentUser) return;
+  const hasPw = hasPasswordProvider(currentUser);
+  document.getElementById('pwPanelTitle').textContent = hasPw ? '🔒 Ganti Password' : '🔒 Buat Password';
+  document.getElementById('pwCurrent').style.display = hasPw ? 'block' : 'none';
+  document.getElementById('pwGoogleNote').style.display = hasPw ? 'none' : 'block';
+  document.getElementById('pwForgotLink').style.display = hasPw ? 'block' : 'none';
+}
+
+function resetPasswordPanel(){
+  ['pwCurrent','pwNew','pwConfirm'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('pwError').textContent = '';
+  document.getElementById('pwInfo').textContent = '';
+  document.getElementById('pwPanel').style.display = 'none';
+  document.getElementById('pwPanelArrow').textContent = '▾';
+  applyPasswordPanelMode();
+}
+
+window.togglePasswordPanel = function(){
+  const panel = document.getElementById('pwPanel');
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  document.getElementById('pwPanelArrow').textContent = open ? '▴' : '▾';
+}
+
+window.submitPasswordChange = async function(){
+  const errEl = document.getElementById('pwError');
+  const infoEl = document.getElementById('pwInfo');
+  errEl.textContent = ''; infoEl.textContent = '';
+  if(!currentUser){ errEl.textContent = 'Kamu belum login.'; return; }
+
+  const hasPw = hasPasswordProvider(currentUser);
+  const cur = document.getElementById('pwCurrent').value;
+  const newPass = document.getElementById('pwNew').value;
+  const confirmPass = document.getElementById('pwConfirm').value;
+
+  if(hasPw && !cur){ errEl.textContent = 'Isi password lama.'; return; }
+  if(!newPass || newPass.length < 6){ errEl.textContent = 'Password baru minimal 6 karakter.'; return; }
+  if(newPass !== confirmPass){ errEl.textContent = 'Ulangi password baru tidak sama.'; return; }
+  if(hasPw && cur === newPass){ errEl.textContent = 'Password baru harus beda dari password lama.'; return; }
+
+  const btn = document.getElementById('pwSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try{
+    if(hasPw){
+      // Firebase minta login ulang dulu sebelum ganti password, jadi cek password lama di sini
+      const cred = EmailAuthProvider.credential(currentUser.email, cur);
+      await reauthenticateWithCredential(currentUser, cred);
+      await updatePassword(currentUser, newPass);
+      infoEl.textContent = 'Password berhasil diganti ✓ Lain kali masuk pakai password baru.';
+    } else {
+      // Akun Google: tambahkan password sebagai cara login kedua
+      const cred = EmailAuthProvider.credential(currentUser.email, newPass);
+      await linkWithCredential(currentUser, cred);
+      infoEl.textContent = 'Password berhasil dibuat ✓ Sekarang bisa masuk pakai email + password, atau tetap pakai Google.';
+    }
+    ['pwCurrent','pwNew','pwConfirm'].forEach(id => document.getElementById(id).value = '');
+    applyPasswordPanelMode();
+  } catch(e){
+    if(hasPw && (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password')){
+      errEl.textContent = 'Password lama salah.';
+    } else {
+      errEl.textContent = translateAuthError(e.code);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan Password Baru';
+  }
+}
+
+window.sendResetToMe = async function(){
+  const errEl = document.getElementById('pwError');
+  const infoEl = document.getElementById('pwInfo');
+  errEl.textContent = ''; infoEl.textContent = '';
+  if(!currentUser) return;
+  try{
+    await sendPasswordResetEmail(auth, currentUser.email);
+    infoEl.textContent = `Link reset password sudah dikirim ke ${currentUser.email}. Cek inbox atau folder Spam.`;
+  } catch(e){
+    errEl.textContent = translateAuthError(e.code);
+  }
+}
 
 onAuthStateChanged(auth, async (user)=>{
   if(user){
@@ -439,6 +583,7 @@ onAuthStateChanged(auth, async (user)=>{
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     document.getElementById('userEmailDisplay').textContent = user.email;
+    resetPasswordPanel();
     await loadCategories();
     initPeriodSelectors();
     loadPeriodData();
