@@ -51,6 +51,17 @@
   .demo-hint{font-size:11px; color:var(--muted); margin-top:8px;}
   .demo-banner{background:var(--orange); color:var(--navy); font-size:12px; font-weight:600; text-align:center; padding:7px 12px;}
   .demo-banner span{text-decoration:underline; margin-left:6px; cursor:pointer;}
+  .field-label{font-size:11px; color:var(--muted); margin:-2px 0 6px 2px;}
+  .field-hint{font-size:11px; color:var(--muted); margin:-6px 0 14px 2px; line-height:1.4;}
+  .modal-backdrop{position:fixed; inset:0; background:rgba(18,38,58,0.55); display:flex; align-items:flex-end; justify-content:center; z-index:1000;}
+  .modal-sheet{background:#fff; width:100%; max-width:480px; border-radius:20px 20px 0 0; padding:22px 20px 28px; max-height:92vh; overflow-y:auto;}
+  .modal-sheet h3{color:var(--navy); font-size:18px; margin-bottom:6px;}
+  .modal-sheet p{color:var(--muted); font-size:13px; line-height:1.45;}
+  .payday-chips{display:flex; flex-direction:column; gap:8px; margin:14px 0 10px;}
+  .payday-chip{padding:12px 14px; border:1.5px solid #E1E8ED; border-radius:12px; background:#fff; text-align:left; font-size:14px; color:var(--navy); font-weight:600; cursor:pointer;}
+  .payday-chip small{display:block; font-weight:400; color:var(--muted); font-size:11px; margin-top:3px;}
+  .payday-other{display:flex; gap:8px; align-items:center;}
+  .payday-other select{margin:0; flex:1;}
 
   /* Pages */
   .page{display:none; padding:16px; animation:fadein .2s ease;}
@@ -180,6 +191,22 @@
 
   <!-- MAIN APP -->
   <div id="mainApp" style="display:none;">
+    <div class="modal-backdrop" id="paydayModal" style="display:none;">
+      <div class="modal-sheet">
+        <h3>Kamu gajian tanggal berapa?</h3>
+        <p>Dipakai untuk menentukan periode budget, jadi satu periode = dari gajian ke gajian berikutnya. Bisa diubah kapan saja di Pengaturan.</p>
+        <div class="payday-chips">
+          <button class="payday-chip" onclick="choosePayday(1)">Tanggal 1 (awal bulan)<small data-payday-example="1"></small></button>
+          <button class="payday-chip" onclick="choosePayday(25)">Tanggal 25<small data-payday-example="25"></small></button>
+          <button class="payday-chip" onclick="choosePayday(31)">Akhir bulan (tanggal terakhir)<small data-payday-example="31"></small></button>
+        </div>
+        <div class="field-label">Tanggal lain</div>
+        <div class="payday-other">
+          <select class="input-field" id="paydayOtherSel"></select>
+          <button class="btn-primary" style="width:auto; padding:14px 18px;" onclick="choosePayday(parseInt(document.getElementById('paydayOtherSel').value))">Pilih</button>
+        </div>
+      </div>
+    </div>
     <div class="demo-banner" id="demoBanner" style="display:none;">👀 Mode Demo — data contoh, tidak tersimpan <span onclick="signOutUser()">Keluar Demo</span></div>
     <div class="topbar">
       <h1 id="pageTitle">Dashboard</h1>
@@ -250,7 +277,10 @@
       <div class="section-label">Jumlah</div>
       <input type="tel" inputmode="numeric" class="amount-input" id="amountInput" placeholder="Rp0" oninput="formatAmountInput(this)">
       <input class="input-field" id="detailsInput" placeholder="Catatan (opsional)">
-      <input class="input-field" id="dateInput" type="date">
+      <input class="input-field" id="dateInput" type="date" onchange="refreshTxPeriodOptions()">
+      <div class="field-label">Masuk ke periode</div>
+      <select class="input-field" id="txPeriodSel"></select>
+      <div class="field-hint">Biarkan "Otomatis". Ubah hanya kalau perlu, misal gaji cair lebih awal karena tanggal gajian jatuh di hari libur.</div>
       <button class="btn-primary" id="saveTxBtn" onclick="saveTransaction()">Simpan Transaksi</button>
       <div class="auth-toggle" id="cancelEditLink" style="display:none; text-align:center;" onclick="startNewTransaction()">Batal edit, buat transaksi baru</div>
     </div>
@@ -275,9 +305,14 @@
         <button class="btn-primary" style="width:auto; padding:14px 18px;" onclick="addCategory()">+</button>
       </div>
       <div style="height:20px;"></div>
+      <div class="section-label">Siklus Gajian</div>
+      <div class="pw-card">
+        <div class="field-label" style="margin-top:0;">Tanggal gajian kamu</div>
+        <select class="input-field" id="paydaySel" onchange="previewPayday()"></select>
+        <div class="pw-note" id="paydayInfo" style="margin-bottom:0;"></div>
+        <button class="btn-primary" id="paydaySaveBtn" style="display:none; margin-top:12px;" onclick="savePaydaySetting()">Simpan & Sesuaikan Periode</button>
+      </div>
       <div class="section-label">Data</div>
-      <button class="btn-primary" style="background:var(--orange); color:var(--navy); margin-bottom:10px;" onclick="migrateToPayCycle()">Migrasi ke Siklus Gajian (25-24)</button>
-      <div style="font-size:11px; color:var(--muted); margin-bottom:20px;">Klik sekali kalau ada transaksi lama yang periode bulannya masih pakai kalender biasa (1-31), supaya disesuaikan ke siklus gajian.</div>
       <button class="btn-primary" style="background:var(--blue); color:var(--navy); margin-bottom:20px;" onclick="exportCSV()">Export Semua Transaksi ke CSV</button>
       <div class="section-label">Akun</div>
       <div style="font-size:13px; color:var(--muted); margin-bottom:10px;" id="userEmailDisplay"></div>
@@ -357,6 +392,8 @@ const db = RealFS.getFirestore(fbApp);
 
 let currentUser = null;
 let DEMO_MODE = false; // true kalau sedang "Coba Demo" (data contoh, tidak ke Firebase)
+let userPayday = 25;   // tanggal gajian akun ini (1–30, 31 = akhir bulan)
+let paydayNeedsSetup = false;
 let isRegisterMode = false;
 let unsubTx = null;
 
@@ -386,8 +423,6 @@ let ringChartInstance, barChartInstance, donutChartInstance;
 // ---------- INIT PERIOD SELECTORS ----------
 function initPeriodSelectors(){
   const now = new Date();
-  currentPeriod.year = now.getFullYear();
-  currentPeriod.month = now.getMonth()+1;
   const monthNames = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
   const monthSel = document.getElementById('monthSel');
   monthSel.innerHTML = monthNames.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
@@ -396,8 +431,18 @@ function initPeriodSelectors(){
   const years = [];
   for(let y = now.getFullYear()-2; y <= now.getFullYear()+2; y++) years.push(y);
   yearSel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
-  yearSel.value = currentPeriod.year;
-  document.getElementById('dateInput').valueAsDate = now;
+  jumpToCurrentPeriod();
+  document.getElementById('dateInput').value = todayISO();
+  refreshTxPeriodOptions('');
+}
+
+// Buka periode yang sedang berjalan sesuai tanggal gajian (bukan sekadar bulan kalender)
+function jumpToCurrentPeriod(){
+  const [y, m] = dateToPeriod(todayISO()).split('-').map(Number);
+  currentPeriod.year = y;
+  currentPeriod.month = m;
+  document.getElementById('monthSel').value = m;
+  document.getElementById('yearSel').value = y;
 }
 
 window.onPeriodChange = function(){
@@ -599,12 +644,15 @@ async function startApp(user){
   document.getElementById('pwCard').style.display = DEMO_MODE ? 'none' : 'block';
   document.getElementById('userEmailDisplay').textContent = DEMO_MODE ? 'Akun Demo — data contoh, tidak tersimpan' : user.email;
   resetPasswordPanel();
-  await loadCategories();
+  const isNewUser = await loadCategories();
+  await loadPreferences(isNewUser);
   initPeriodSelectors();
+  renderPaydaySetting();
   loadPeriodData();
   initReserveTracking();
   refreshPeriodRangeBar();
   goPage('dashboard');
+  if(paydayNeedsSetup) openPaydayModal();
 }
 
 onAuthStateChanged(auth, async (user)=>{
@@ -776,6 +824,8 @@ function seedDemoData(){
   const today = new Date(); today.setHours(0,0,0,0);
 
   DemoFS.seed(`${base}/settings/categories`, DEMO_CATEGORIES);
+  DemoFS.seed(`${base}/settings/preferences`, { payday: 25 });
+  userPayday = 25;
 
   const budget = {};
   let plannedIncome = 0, plannedOther = 0;
@@ -791,12 +841,12 @@ function seedDemoData(){
   const surplus = {};
   let txCounter = 0;
 
-  // Periode berjalan (k=0) + 3 periode sebelumnya, ikut pilihan bulan default di app
+  // Periode berjalan (k=0) + 3 periode sebelumnya
+  const [cy, cm] = dateToPeriod(toISODate(today)).split('-').map(Number);
   for(let k = 3; k >= 0; k--){
-    const pDate = new Date(today.getFullYear(), today.getMonth() - k, 1);
-    const key = `${pDate.getFullYear()}-${String(pDate.getMonth()+1).padStart(2,'0')}`;
-    const start = new Date(pDate.getFullYear(), pDate.getMonth() - 1, 25);
-    const end = new Date(pDate.getFullYear(), pDate.getMonth(), 24);
+    const [py, pm] = addMonths(cy, cm, -k);
+    const key = periodKeyOf(py, pm);
+    const { start, end } = periodRange(py, pm);
     DemoFS.seed(`${base}/budgets/${key}`, budget);
     surplus[key] = 0;
 
@@ -826,7 +876,8 @@ function seedDemoData(){
     if(take > 0){ allocations.push({ period: p, amount: take }); need -= take; }
   });
   if(allocations.length){
-    const used = new Date(today.getFullYear(), today.getMonth() - 1, 12);
+    const used = periodRange(...addMonths(cy, cm, -1)).start;
+    used.setDate(used.getDate() + 17);
     DemoFS.seed(`${base}/reserveWithdrawals/seedReserve1`, {
       amount: allocations.reduce((s,a)=> s + a.amount, 0),
       note: 'Servis AC (tak terduga)', date: fmt(used), allocations, createdAt: used.toISOString()
@@ -847,14 +898,118 @@ window.startDemo = async function(){
 async function loadCategories(){
   const ref = doc(db, 'users', currentUser.uid, 'settings', 'categories');
   const snap = await getDoc(ref);
+  let isNewUser = false;
   if(snap.exists()){
     userCategories = snap.data();
   } else {
     userCategories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
     await setDoc(ref, userCategories);
+    isNewUser = true;
   }
   renderTypeGrid();
   renderCatMgrTypeSelect();
+  return isNewUser;
+}
+
+// ---------- PREFERENSI: TANGGAL GAJIAN ----------
+async function loadPreferences(isNewUser){
+  paydayNeedsSetup = false;
+  const ref = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
+  const snap = await getDoc(ref);
+  const saved = snap.exists() ? parseInt(snap.data().payday) : NaN;
+  if(saved >= 1 && saved <= 31){ userPayday = saved; return; }
+  userPayday = 25;
+  if(isNewUser){
+    paydayNeedsSetup = true; // user baru: tanya dulu lewat popup
+  } else {
+    // user lama: semua datanya dibuat dengan siklus 25, jadi tetap 25
+    await setDoc(ref, { payday: 25 }, { merge: true });
+  }
+}
+
+function paydayName(p){ return p >= 31 ? 'akhir bulan' : `tanggal ${p}`; }
+function paydayOptionsHtml(){
+  let html = '';
+  for(let d = 1; d <= 30; d++) html += `<option value="${d}">Tanggal ${d}</option>`;
+  return html + `<option value="31">Akhir bulan (tanggal terakhir)</option>`;
+}
+function periodDesc(key, p = userPayday){
+  const [y, m] = key.split('-').map(Number);
+  return `${MONTH_NAMES_ID[m-1]} ${y} (${periodRangeLabel(y, m, p)})`;
+}
+function currentPeriodDescFor(p){ return periodDesc(dateToPeriod(todayISO(), p), p); }
+
+function renderPaydaySetting(){
+  const sel = document.getElementById('paydaySel');
+  if(!sel.options.length) sel.innerHTML = paydayOptionsHtml();
+  sel.value = String(userPayday);
+  previewPayday();
+}
+
+window.previewPayday = function(){
+  const p = parseInt(document.getElementById('paydaySel').value);
+  document.getElementById('paydayInfo').textContent = `Periode sekarang: ${currentPeriodDescFor(p)}`;
+  document.getElementById('paydaySaveBtn').style.display = p === userPayday ? 'none' : 'block';
+}
+
+window.savePaydaySetting = async function(){
+  const p = parseInt(document.getElementById('paydaySel').value);
+  if(p === userPayday) return;
+  const ok = window.confirm(`Ganti tanggal gajian jadi ${paydayName(p)}?\n\nSemua transaksi akan dipindahkan ke periode yang sesuai. Transaksi yang periodenya kamu atur manual tidak ikut diubah, dan Planned budget tetap di nama bulannya.`);
+  if(!ok){ renderPaydaySetting(); return; }
+  const btn = document.getElementById('paydaySaveBtn');
+  btn.disabled = true; btn.textContent = 'Menyesuaikan periode...';
+  try{
+    const changed = await applyPayday(p, true);
+    showToast(`Tanggal gajian: ${paydayName(p)} ✓ ${changed} transaksi disesuaikan`);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan & Sesuaikan Periode';
+  }
+}
+
+function openPaydayModal(){
+  const other = document.getElementById('paydayOtherSel');
+  if(!other.options.length){ other.innerHTML = paydayOptionsHtml(); other.value = '10'; }
+  document.querySelectorAll('[data-payday-example]').forEach(el=>{
+    el.textContent = 'Periode sekarang: ' + currentPeriodDescFor(parseInt(el.dataset.paydayExample));
+  });
+  document.getElementById('paydayModal').style.display = 'flex';
+}
+
+window.choosePayday = async function(p){
+  document.getElementById('paydayModal').style.display = 'none';
+  paydayNeedsSetup = false;
+  await applyPayday(p, true);
+  showToast(`Tanggal gajian: ${paydayName(p)} ✓`);
+}
+
+async function applyPayday(newPayday, recompute){
+  userPayday = newPayday;
+  await setDoc(doc(db, 'users', currentUser.uid, 'settings', 'preferences'), { payday: newPayday }, { merge: true });
+  const changed = recompute ? await recomputeAllPeriods() : 0;
+  jumpToCurrentPeriod();
+  renderPaydaySetting();
+  refreshTxPeriodOptions();
+  loadPeriodData();
+  renderReserveCard();
+  refreshPeriodRangeBar();
+  return changed;
+}
+
+// Hitung ulang periode semua transaksi pakai tanggal gajian sekarang (kecuali yang diatur manual)
+async function recomputeAllPeriods(){
+  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'transactions'));
+  const updates = [];
+  snap.forEach(d=>{
+    const t = d.data();
+    if(!t.date || t.periodManual) return;
+    const correct = dateToPeriod(t.date);
+    if(t.periodKey !== correct){
+      updates.push(updateDoc(doc(db, 'users', currentUser.uid, 'transactions', d.id), { periodKey: correct }));
+    }
+  });
+  await Promise.all(updates);
+  return updates.length;
 }
 
 async function saveCategories(){
@@ -898,26 +1053,56 @@ window.formatAmountInput = function(el){
   el.value = val ? 'Rp' + Number(val).toLocaleString('id-ID') : '';
 }
 
-// ---------- PAY-CYCLE PERIOD (25 - 24 bulan depan) ----------
-const CYCLE_CUTOFF_DAY = 25;
-function dateToPeriod(dateStr){
-  const parts = (dateStr || '').split('-');
-  let year = parseInt(parts[0]);
-  let month = parseInt(parts[1]);
-  const day = parseInt(parts[2]);
-  if(!year || !month || !day){
-    const now = new Date();
-    year = now.getFullYear(); month = now.getMonth()+1;
-  } else if(day >= CYCLE_CUTOFF_DAY){
-    month += 1;
-    if(month > 12){ month = 1; year += 1; }
-  }
-  return `${year}-${String(month).padStart(2,'0')}`;
+// ---------- PERIODE GAJIAN (dari gajian ke gajian berikutnya) ----------
+// Satu periode dimulai di tanggal gajian dan berakhir sehari sebelum gajian berikutnya.
+// Nama periode = bulan yang paling banyak harinya:
+//   gajian tgl 1–15  -> dinamai bulan gajinya masuk   (gaji 1 Nov  = periode November)
+//   gajian tgl 16–31 -> dinamai bulan berikutnya      (gaji 25 Okt = periode November)
+// Tanggal gajian yang lebih besar dari jumlah hari di bulan itu otomatis jadi hari terakhir.
+function toISODate(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-function periodRangeLabel(year, month){
-  const startMonth = month === 1 ? 12 : month - 1;
-  const startYear = month === 1 ? year - 1 : year;
-  return `${CYCLE_CUTOFF_DAY} ${MONTH_NAMES_ID[startMonth-1].slice(0,3)} – ${CYCLE_CUTOFF_DAY-1} ${MONTH_NAMES_ID[month-1].slice(0,3)}`;
+function todayISO(){ return toISODate(new Date()); } // pakai tanggal lokal, bukan UTC
+function daysInMonth(y, m){ return new Date(y, m, 0).getDate(); }
+function addMonths(y, m, n){ const d = new Date(y, m - 1 + n, 1); return [d.getFullYear(), d.getMonth() + 1]; }
+function periodKeyOf(y, m){ return `${y}-${String(m).padStart(2,'0')}`; }
+function cutoffDay(y, m, p = userPayday){ return Math.min(p, daysInMonth(y, m)); }
+function labelShift(p = userPayday){ return p >= 16 ? 1 : 0; }
+
+function dateToPeriod(dateStr, p = userPayday){
+  let [y, m, d] = (dateStr || '').split('-').map(n => parseInt(n));
+  if(!y || !m || !d){ const now = new Date(); y = now.getFullYear(); m = now.getMonth() + 1; d = now.getDate(); }
+  const [sy, sm] = d >= cutoffDay(y, m, p) ? [y, m] : addMonths(y, m, -1);
+  const [ly, lm] = addMonths(sy, sm, labelShift(p));
+  return periodKeyOf(ly, lm);
+}
+
+function periodRange(year, month, p = userPayday){
+  const [sy, sm] = addMonths(year, month, -labelShift(p));
+  const [ny, nm] = addMonths(sy, sm, 1);
+  return {
+    start: new Date(sy, sm - 1, cutoffDay(sy, sm, p)),
+    end: new Date(ny, nm - 1, cutoffDay(ny, nm, p) - 1)
+  };
+}
+
+function periodRangeLabel(year, month, p = userPayday){
+  const { start, end } = periodRange(year, month, p);
+  const f = d => `${d.getDate()} ${MONTH_NAMES_ID[d.getMonth()].slice(0,3)}`;
+  return `${f(start)} – ${f(end)}`;
+}
+
+// Pilihan "Masuk ke periode" di form transaksi
+window.refreshTxPeriodOptions = function(manualKey){
+  const sel = document.getElementById('txPeriodSel');
+  const desired = manualKey !== undefined ? manualKey : sel.value;
+  const autoKey = dateToPeriod(document.getElementById('dateInput').value || todayISO());
+  const [ay, am] = autoKey.split('-').map(Number);
+  const keys = [periodKeyOf(...addMonths(ay, am, -1)), periodKeyOf(...addMonths(ay, am, 1))];
+  if(desired && desired !== autoKey && !keys.includes(desired)) keys.push(desired);
+  sel.innerHTML = `<option value="">Otomatis: ${periodDesc(autoKey)}</option>` +
+    keys.sort().map(k => `<option value="${k}">${periodDesc(k)}</option>`).join('');
+  sel.value = (desired && desired !== autoKey) ? desired : '';
 }
 
 let editingTxId = null;
@@ -927,7 +1112,8 @@ window.startNewTransaction = function(){
   document.getElementById('amountInput').value = '';
   document.getElementById('amountInput').dataset.raw = '';
   document.getElementById('detailsInput').value = '';
-  document.getElementById('dateInput').valueAsDate = new Date();
+  document.getElementById('dateInput').value = todayISO();
+  refreshTxPeriodOptions('');
   selectedType = null; selectedCategory = null;
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('selected'));
   document.getElementById('catChips').innerHTML = '';
@@ -953,6 +1139,7 @@ window.editTransaction = function(id){
   document.getElementById('amountInput').dataset.raw = String(t.amount);
   document.getElementById('detailsInput').value = t.details || '';
   document.getElementById('dateInput').value = t.date || '';
+  refreshTxPeriodOptions(t.periodManual ? t.periodKey : '');
   document.getElementById('saveTxBtn').textContent = 'Update Transaksi';
   document.getElementById('cancelEditLink').style.display = 'block';
   goPage('add');
@@ -966,6 +1153,9 @@ window.saveTransaction = async function(){
   if(!amount){ showToast('Isi jumlah'); return; }
   const details = document.getElementById('detailsInput').value.trim();
   const dateVal = document.getElementById('dateInput').value;
+  const autoKey = dateToPeriod(dateVal);
+  const chosenKey = document.getElementById('txPeriodSel').value;
+  const periodManual = !!chosenKey && chosenKey !== autoKey;
 
   const payload = {
     type: selectedType,
@@ -973,7 +1163,8 @@ window.saveTransaction = async function(){
     amount: amount,
     details: details,
     date: dateVal,
-    periodKey: dateToPeriod(dateVal)
+    periodKey: periodManual ? chosenKey : autoKey,
+    periodManual
   };
 
   if(editingTxId){
@@ -1118,7 +1309,7 @@ function renderTxList(){
         <div class="tx-icon" style="background:${meta.color}22; color:${meta.color}">${meta.icon}</div>
         <div>
           <div class="tx-cat">${t.category}</div>
-          <div class="tx-date">${t.date || ''}${t.details ? ' · '+t.details : ''}</div>
+          <div class="tx-date">${t.date || ''}${t.details ? ' · '+t.details : ''}${t.periodManual ? ' · 📌 periode manual' : ''}</div>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
@@ -1545,26 +1736,6 @@ window.removeCategory = async function(type, idx){
   showToast('Kategori dihapus');
 }
 
-// ---------- MIGRATION: recompute periodKey using pay-cycle (25-24) ----------
-window.migrateToPayCycle = async function(){
-  showToast('Mengecek transaksi lama...');
-  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'transactions'));
-  let changed = 0;
-  const updates = [];
-  snap.forEach(d=>{
-    const t = d.data();
-    if(!t.date) return;
-    const correctPeriod = dateToPeriod(t.date);
-    if(t.periodKey !== correctPeriod){
-      updates.push(setDoc(doc(db, 'users', currentUser.uid, 'transactions', d.id), { periodKey: correctPeriod }, { merge: true }));
-      changed++;
-    }
-  });
-  await Promise.all(updates);
-  showToast(changed > 0 ? `${changed} transaksi disesuaikan ✓` : 'Semua transaksi sudah sesuai ✓');
-  loadPeriodData();
-}
-
 // ---------- EXPORT CSV ----------
 window.exportCSV = async function(){
   showToast('Menyiapkan export...');
@@ -1690,7 +1861,7 @@ window.toggleReserveForm = function(){
   const form = document.getElementById('reserveForm');
   form.style.display = form.style.display === 'none' ? 'block' : 'none';
   if(!document.getElementById('reserveDateInput').value){
-    document.getElementById('reserveDateInput').valueAsDate = new Date();
+    document.getElementById('reserveDateInput').value = todayISO();
   }
 }
 
