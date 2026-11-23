@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <link rel="apple-touch-icon" href="icon-192.png">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root{
     --navy:#1B4965; --navy-light:#EAF2F7; --pink:#F6C6C0; --orange:#F4B860;
@@ -51,6 +51,14 @@
   .demo-hint{font-size:11px; color:var(--muted); margin-top:8px;}
   .demo-banner{background:var(--orange); color:var(--navy); font-size:12px; font-weight:600; text-align:center; padding:7px 12px;}
   .demo-banner span{text-decoration:underline; margin-left:6px; cursor:pointer;}
+  .splash{position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; z-index:900; padding:24px; text-align:center;}
+  .splash img{width:76px; height:76px; border-radius:18px;}
+  .splash .spin{width:26px; height:26px; border:3px solid #D9E2EA; border-top-color:var(--navy); border-radius:50%; animation:spin .8s linear infinite;}
+  .splash .txt{font-size:13px; color:var(--muted); line-height:1.45;}
+  .splash button{display:none; padding:10px 18px; border:none; border-radius:10px; background:var(--navy); color:#fff; font-weight:600;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .load-bar{height:3px; background:linear-gradient(90deg, transparent, var(--orange), transparent); background-size:200% 100%; animation:loadbar 1.1s linear infinite;}
+  @keyframes loadbar{from{background-position:200% 0;} to{background-position:-200% 0;}}
   .field-label{font-size:11px; color:var(--muted); margin:-2px 0 6px 2px;}
   .field-hint{font-size:11px; color:var(--muted); margin:-6px 0 14px 2px; line-height:1.4;}
   .modal-backdrop{position:fixed; inset:0; background:rgba(18,38,58,0.55); display:flex; align-items:flex-end; justify-content:center; z-index:1000;}
@@ -166,10 +174,16 @@
 </style>
 </head>
 <body>
+  <div class="splash" id="splash">
+    <img src="icon-192.png" alt="">
+    <div class="spin" id="splashSpin"></div>
+    <div class="txt" id="splashTxt">Memuat…</div>
+    <button id="splashRetry" onclick="location.reload()">Coba lagi</button>
+  </div>
 <div id="app">
 
   <!-- AUTH SCREEN -->
-  <div id="authScreen" class="auth-wrap">
+  <div id="authScreen" class="auth-wrap" style="display:none;">
     <h2>Monthly Budget</h2>
     <p>Masuk untuk sync data ke semua device kamu</p>
     <div class="auth-error" id="authError"></div>
@@ -207,6 +221,7 @@
         </div>
       </div>
     </div>
+    <div class="load-bar" id="loadBar" style="display:none;"></div>
     <div class="demo-banner" id="demoBanner" style="display:none;">👀 Mode Demo — data contoh, tidak tersimpan <span onclick="signOutUser()">Keluar Demo</span></div>
     <div class="topbar">
       <h1 id="pageTitle">Dashboard</h1>
@@ -224,7 +239,7 @@
     <div class="page" id="page-dashboard">
       <div class="overview-card">
         <div class="overview-amount-label">Sisa Budget Bulan Ini</div>
-        <div class="overview-amount" id="leftToSpend">Rp0</div>
+        <div class="overview-amount" id="leftToSpend">—</div>
         <div class="overview-row">
           <div class="overview-col">
             <div class="chart-mini"><canvas id="ringChart"></canvas></div>
@@ -371,7 +386,8 @@ import * as RealFS from "https://www.gstatic.com/firebasejs/10.12.2/firebase-fir
 // Fungsi Firestore disimpan di variabel (bukan import langsung) supaya Mode Demo
 // bisa menukarnya ke versi in-memory yang tidak menyentuh Firebase sama sekali.
 let { doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
-      query, where, onSnapshot, serverTimestamp, updateDoc, deleteField } = RealFS;
+      query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
+      getDocFromCache, getDocFromServer } = RealFS;
 
 // ====== ISI DENGAN FIREBASE CONFIG KAMU ======
 const firebaseConfig = {
@@ -388,7 +404,16 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 auth.languageCode = 'id'; // email reset password dari Firebase pakai Bahasa Indonesia
-const db = RealFS.getFirestore(fbApp);
+// Data disimpan juga di HP (IndexedDB), jadi saat app dibuka angka langsung tampil dari cache
+// lalu disinkronkan dengan server di belakang layar. Kalau browser tidak mendukung, pakai mode biasa.
+let db;
+try{
+  db = RealFS.initializeFirestore(fbApp, {
+    localCache: RealFS.persistentLocalCache({ tabManager: RealFS.persistentMultipleTabManager() })
+  });
+} catch(e){
+  db = RealFS.getFirestore(fbApp);
+}
 
 let currentUser = null;
 let DEMO_MODE = false; // true kalau sedang "Coba Demo" (data contoh, tidak ke Firebase)
@@ -639,13 +664,20 @@ window.sendResetToMe = async function(){
 async function startApp(user){
   currentUser = user;
   document.getElementById('authScreen').style.display = 'none';
+  // ambil kategori & setting sekaligus (paralel), dari cache HP kalau ada
+  const settingsP = Promise.all([
+    fastGet(doc(db, 'users', user.uid, 'settings', 'categories')),
+    fastGet(doc(db, 'users', user.uid, 'settings', 'preferences'))
+  ]);
+  hideSplash();
   document.getElementById('mainApp').style.display = 'block';
   document.getElementById('demoBanner').style.display = DEMO_MODE ? 'block' : 'none';
   document.getElementById('pwCard').style.display = DEMO_MODE ? 'none' : 'block';
   document.getElementById('userEmailDisplay').textContent = DEMO_MODE ? 'Akun Demo — data contoh, tidak tersimpan' : user.email;
   resetPasswordPanel();
-  const isNewUser = await loadCategories();
-  await loadPreferences(isNewUser);
+  const [catSnap, prefSnap] = await settingsP;
+  const isNewUser = await loadCategories(catSnap);
+  await loadPreferences(isNewUser, prefSnap);
   initPeriodSelectors();
   renderPaydaySetting();
   loadPeriodData();
@@ -653,13 +685,69 @@ async function startApp(user){
   refreshPeriodRangeBar();
   goPage('dashboard');
   if(paydayNeedsSetup) openPaydayModal();
+  refreshSettingsInBackground(catSnap, prefSnap);
 }
+
+// ---------- KECEPATAN: cache dulu, server menyusul ----------
+// Ambil dokumen dari cache HP (instan). Kalau belum ada di cache, baru tunggu server.
+async function fastGet(ref){
+  try{
+    const cached = await getDocFromCache(ref);
+    if(cached.exists()) return cached;
+  } catch(e){ /* belum ada di cache */ }
+  try{ return await getDoc(ref); } catch(e){ return null; }
+}
+
+// Kalau kategori/setting tadi diambil dari cache, cek versi terbaru di server
+// (misal diubah dari HP lain) lalu perbarui tampilan tanpa membuat user menunggu.
+async function refreshSettingsInBackground(catSnap, prefSnap){
+  const fromCache = s => !!(s && s.metadata && s.metadata.fromCache);
+  if(DEMO_MODE || !currentUser || (!fromCache(catSnap) && !fromCache(prefSnap))) return;
+  const uid = currentUser.uid;
+  try{
+    const [c, p] = await Promise.all([
+      getDocFromServer(doc(db, 'users', uid, 'settings', 'categories')),
+      getDocFromServer(doc(db, 'users', uid, 'settings', 'preferences'))
+    ]);
+    if(!currentUser || currentUser.uid !== uid) return;
+    if(c.exists() && JSON.stringify(c.data()) !== JSON.stringify(userCategories)){
+      userCategories = c.data();
+      renderTypeGrid(); renderCatMgrTypeSelect(); renderDashboard(); renderPlanPage();
+    }
+    const newPayday = p.exists() ? parseInt(p.data().payday) : NaN;
+    if(newPayday >= 1 && newPayday <= 31 && newPayday !== userPayday){
+      userPayday = newPayday;
+      renderPaydaySetting(); jumpToCurrentPeriod(); loadPeriodData(); renderReserveCard(); refreshPeriodRangeBar();
+    }
+  } catch(e){ /* sedang offline: tetap pakai data cache */ }
+}
+
+function hideSplash(){
+  const s = document.getElementById('splash');
+  if(s) s.style.display = 'none';
+}
+function showSplashError(msg){
+  document.getElementById('splash').style.display = 'flex';
+  document.getElementById('splashSpin').style.display = 'none';
+  document.getElementById('splashTxt').textContent = msg;
+  document.getElementById('splashRetry').style.display = 'inline-block';
+}
+setTimeout(()=>{
+  const s = document.getElementById('splash');
+  if(s && s.style.display !== 'none') document.getElementById('splashTxt').textContent = 'Masih memuat… sinyal sepertinya lambat.';
+}, 8000);
 
 onAuthStateChanged(auth, async (user)=>{
   if(DEMO_MODE) return; // sedang mode demo, abaikan status login Firebase
   if(user){
-    await startApp(user);
+    try{
+      await startApp(user);
+    } catch(e){
+      console.error(e);
+      showSplashError('Gagal memuat data. Cek koneksi internet, lalu coba lagi.');
+    }
   } else {
+    hideSplash();
     currentUser = null;
     document.getElementById('authScreen').style.display = 'block';
     document.getElementById('mainApp').style.display = 'none';
@@ -728,6 +816,8 @@ const DemoFS = (()=>{
     serverTimestamp: () => ({ __demoTs: true }),
     deleteField: () => ({ __demoDelete: true }),
     getDoc: async ref => docSnap(ref.path),
+    getDocFromCache: async ref => docSnap(ref.path),
+    getDocFromServer: async ref => docSnap(ref.path),
     getDocs: async target => querySnap(target),
     setDoc: async (ref, data, opts) => {
       if(opts && opts.merge && store.has(ref.path)) deepMerge(store.get(ref.path), data);
@@ -888,16 +978,17 @@ function seedDemoData(){
 window.startDemo = async function(){
   DEMO_MODE = true;
   ({ doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
-     query, where, onSnapshot, serverTimestamp, updateDoc, deleteField } = DemoFS);
+     query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
+     getDocFromCache, getDocFromServer } = DemoFS);
   seedDemoData();
   await startApp({ uid: DEMO_UID, email: 'demo@contoh.id', providerData: [] });
   showToast('Mode Demo aktif — silakan coba-coba, tidak ada yang tersimpan');
 }
 
 // ---------- CATEGORIES ----------
-async function loadCategories(){
+async function loadCategories(prefetched){
   const ref = doc(db, 'users', currentUser.uid, 'settings', 'categories');
-  const snap = await getDoc(ref);
+  const snap = prefetched || await getDoc(ref);
   let isNewUser = false;
   if(snap.exists()){
     userCategories = snap.data();
@@ -912,10 +1003,10 @@ async function loadCategories(){
 }
 
 // ---------- PREFERENSI: TANGGAL GAJIAN ----------
-async function loadPreferences(isNewUser){
+async function loadPreferences(isNewUser, prefetched){
   paydayNeedsSetup = false;
   const ref = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
-  const snap = await getDoc(ref);
+  const snap = prefetched || await getDoc(ref);
   const saved = snap.exists() ? parseInt(snap.data().payday) : NaN;
   if(saved >= 1 && saved <= 31){ userPayday = saved; return; }
   userPayday = 25;
@@ -1195,21 +1286,28 @@ function loadPeriodData(){
     collection(db, 'users', currentUser.uid, 'transactions'),
     where('periodKey','==', periodKey())
   );
+  let gotTx = false, gotBudget = false;
+  const loadBar = document.getElementById('loadBar');
+  loadBar.style.display = 'block';
+  const doneLoading = () => { if(gotTx && gotBudget) loadBar.style.display = 'none'; };
+  const onLoadError = (err) => { console.warn(err); gotTx = gotBudget = true; doneLoading(); };
   unsubTx = onSnapshot(q, (snap)=>{
+    gotTx = true; doneLoading();
     allTransactions = [];
     snap.forEach(d=> allTransactions.push({id:d.id, ...d.data()}));
     allTransactions.sort((a,b)=> (b.date||'').localeCompare(a.date||''));
     renderDashboard();
     renderTxList();
     renderPlanPage();
-  });
+  }, onLoadError);
 
   const budgetRef = doc(db, 'users', currentUser.uid, 'budgets', periodKey());
   unsubBudget = onSnapshot(budgetRef, (snap)=>{
+    gotBudget = true; doneLoading();
     currentBudget = snap.exists() ? snap.data() : emptyBudget();
     renderDashboard();
     renderPlanPage();
-  });
+  }, onLoadError);
 }
 
 // ---------- DASHBOARD ----------
@@ -1236,7 +1334,7 @@ function renderDashboard(){
   const total = income > 0 ? income : (spent || 1);
   const ringCtx = document.getElementById('ringChart');
   if(ringChartInstance) ringChartInstance.destroy();
-  ringChartInstance = new Chart(ringCtx, {
+  if(window.Chart) ringChartInstance = new Chart(ringCtx, {
     type:'doughnut',
     data:{ labels:['Terpakai','Sisa'], datasets:[{
       data:[Math.min(spent,total), Math.max(total-spent,0)],
@@ -1255,7 +1353,7 @@ function renderDashboard(){
 
   const barCtx = document.getElementById('barChart');
   if(barChartInstance) barChartInstance.destroy();
-  barChartInstance = new Chart(barCtx, {
+  if(window.Chart) barChartInstance = new Chart(barCtx, {
     type:'bar',
     data:{
       labels:['Income','Fixed','Variable','Savings','Debts'],
@@ -1270,7 +1368,7 @@ function renderDashboard(){
   // Donut breakdown (fixed/variable/savings/debts only)
   const donutCtx = document.getElementById('donutChart');
   if(donutChartInstance) donutChartInstance.destroy();
-  donutChartInstance = new Chart(donutCtx, {
+  if(window.Chart) donutChartInstance = new Chart(donutCtx, {
     type:'doughnut',
     data:{ labels:['Fixed','Variable','Savings','Debts'],
       datasets:[{ data:[fixed,variable,savings,debts],
