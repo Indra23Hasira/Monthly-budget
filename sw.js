@@ -1,9 +1,13 @@
-const CACHE_NAME = 'budget-app-v2';
-const ASSETS = ['./', './index.html', './manifest.json'];
+const CACHE_NAME = 'budget-app-v3';
+const CHART_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', CHART_URL];
+const NETWORK_TIMEOUT_MS = 3000; // sinyal lambat: maksimal tunggu 3 detik, lalu pakai versi tersimpan
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).catch(()=>{})
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {})))
+    )
   );
   self.skipWaiting();
 });
@@ -17,19 +21,52 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+function saveToCache(request, response) {
+  if (response && response.ok) {
+    const clone = response.clone();
+    caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+  }
+}
+
+// File app (index.html dll): coba internet dulu supaya update langsung terasa,
+// tapi kalau lebih dari 3 detik atau offline, pakai versi tersimpan di HP.
+function networkWithTimeout(request) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (response) => { if (!settled) { settled = true; resolve(response); } };
+    const timer = setTimeout(() => {
+      caches.match(request, { ignoreSearch: true }).then((cached) => { if (cached) finish(cached); });
+    }, NETWORK_TIMEOUT_MS);
+    fetch(request)
+      .then((response) => {
+        saveToCache(request, response);
+        clearTimeout(timer);
+        finish(response);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        caches.match(request, { ignoreSearch: true }).then((cached) => finish(cached || Response.error()));
+      });
+  });
+}
+
 self.addEventListener('fetch', (event) => {
-  // Never cache Firebase/API calls
-  if (event.request.url.includes('firestore') || event.request.url.includes('googleapis') || event.request.url.includes('gstatic')) {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = request.url;
+  // Jangan pernah cache Firebase / Google (data & login selalu langsung ke server)
+  if (url.includes('firestore') || url.includes('googleapis') || url.includes('gstatic')) return;
+
+  // Library dengan versi tetap (Chart.js): langsung dari cache, tidak perlu tunggu internet
+  if (url.startsWith('https://cdn.jsdelivr.net/')) {
+    event.respondWith(
+      caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+        saveToCache(request, response);
+        return response;
+      }))
+    );
     return;
   }
-  // Network-first for the app shell so updates show immediately; fall back to cache if offline
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
-  );
+
+  event.respondWith(networkWithTimeout(request));
 });
