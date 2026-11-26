@@ -1515,12 +1515,71 @@ window.copyPlanFromPreviousPeriod = async function(){
   renderDashboard();
 }
 
+// ---------- NAMA REKENING: beda penulisan dianggap sama ----------
+// "Sea Bank", "Seabank", "seabank" -> SeaBank;  "krom", "krombank", "Krom bank" -> Krom Bank
+// Kunci nama: huruf kecil, tanpa spasi/tanda baca, tanpa kata "bank" di depan/belakang.
+const KNOWN_ACCOUNTS = [
+  ['BCA',        ['bca', 'centralasia', 'bankcentralasia', 'mybca']],
+  ['BRI',        ['bri', 'brimo', 'rakyatindonesia']],
+  ['BNI',        ['bni', 'wondr', 'wondrbybni', 'negaraindonesia']],
+  ['Mandiri',    ['mandiri', 'livin', 'livinbymandiri']],
+  ['BSI',        ['bsi', 'syariahindonesia']],
+  ['BTN',        ['btn']],
+  ['CIMB Niaga', ['cimb', 'cimbniaga', 'niaga', 'octo']],
+  ['Permata',    ['permata', 'permatame']],
+  ['Danamon',    ['danamon']],
+  ['Jenius',     ['jenius']],
+  ['Bank Jago',  ['jago']],
+  ['SeaBank',    ['sea']],
+  ['Krom Bank',  ['krom']],
+  ['Superbank',  ['super']],
+  ['blu',        ['blu', 'blubybca', 'bludigital', 'bcadigital']],
+  ['Allo Bank',  ['allo']],
+  ['Neo Bank',   ['neo', 'neocommerce']],
+  ['Bank Raya',  ['raya']],
+  ['DANA',       ['dana']],
+  ['OVO',        ['ovo']],
+  ['GoPay',      ['gopay']],
+  ['ShopeePay',  ['shopeepay', 'spay']],
+  ['LinkAja',    ['linkaja']],
+  ['Flip',       ['flip']]
+];
+const ACCOUNT_ALIASES = {};
+KNOWN_ACCOUNTS.forEach(([name, keys]) => keys.forEach(k => ACCOUNT_ALIASES[k] = name));
+
+function accountKey(name){
+  const base = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const k = base.replace(/^bank/, '').replace(/bank$/, '');
+  return k || base;
+}
+// Nama baku untuk bank/e-wallet yang dikenal; nama lain dibiarkan seperti yang diketik
+function canonicalAccountName(name){
+  const raw = String(name || '').trim().replace(/\s+/g, ' ');
+  if(!raw) return '';
+  return ACCOUNT_ALIASES[accountKey(raw)] || raw;
+}
+// Dari beberapa penulisan nama yang sama, pilih yang paling sering dipakai (seri: yang lebih banyak huruf besar)
+function pickDisplayName(spellings){
+  const count = {};
+  spellings.forEach(s => count[s] = (count[s] || 0) + 1);
+  const caps = s => (s.match(/[A-Z]/g) || []).length;
+  return Object.keys(count).sort((a, b) => (count[b] - count[a]) || (caps(b) - caps(a)) || a.localeCompare(b))[0];
+}
+function escAttr(s){ return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
 const BANK_BRAND_COLORS = [
   { match: /dana/i, color: '#118EEA' },
   { match: /^bca|bank central asia/i, color: '#003D79' },
   { match: /krom/i, color: '#7B3FF2' },
   { match: /sea\s*bank/i, color: '#F97316' },
-  { match: /super\s*bank/i, color: '#9ACD32' }
+  { match: /super\s*bank/i, color: '#9ACD32' },
+  { match: /^bri$/i, color: '#00529C' },
+  { match: /^bni$/i, color: '#F15A23' },
+  { match: /mandiri/i, color: '#E8A400' },
+  { match: /jago/i, color: '#F7A21B' },
+  { match: /^ovo$/i, color: '#4C2A86' },
+  { match: /gopay/i, color: '#00AED6' },
+  { match: /shopeepay/i, color: '#EE4D2D' }
 ];
 function getDestinationColor(name){
   const found = BANK_BRAND_COLORS.find(b => b.match.test(name));
@@ -1528,19 +1587,26 @@ function getDestinationColor(name){
 }
 
 function computeDestinationRekap(){
-  const map = {}; // destination -> { total, totalActual, items: [{label, planned, actual}] }
+  // dikelompokkan per kunci nama, jadi "Seabank" dan "Sea Bank" masuk satu rekening
+  const groups = {}; // kunci -> { spellings, total, totalActual, items }
   Object.keys(TYPE_META).forEach(typeKey=>{
     if(typeKey === 'income') return;
     (userCategories[typeKey] || []).forEach(cat=>{
-      const dest = rawDestination(typeKey, cat).trim();
+      const dest = canonicalAccountName(rawDestination(typeKey, cat));
       if(!dest) return;
+      const key = accountKey(dest);
       const planned = plannedFor(typeKey, cat);
       const actual = actualFor(typeKey, cat);
-      if(!map[dest]) map[dest] = { total: 0, totalActual: 0, items: [] };
-      map[dest].total += planned;
-      map[dest].totalActual += actual;
-      map[dest].items.push({ label: cat, planned, actual });
+      if(!groups[key]) groups[key] = { spellings: [], total: 0, totalActual: 0, items: [] };
+      groups[key].spellings.push(dest);
+      groups[key].total += planned;
+      groups[key].totalActual += actual;
+      groups[key].items.push({ label: cat, planned, actual });
     });
+  });
+  const map = {}; // nama tampilan -> { total, totalActual, items }
+  Object.values(groups).forEach(g=>{
+    map[pickDisplayName(g.spellings)] = { total: g.total, totalActual: g.totalActual, items: g.items };
   });
   return map;
 }
@@ -1617,14 +1683,15 @@ function renderPlanPage(){
   let grandPlanned = 0, grandActual = 0;
 
   // Kumpulkan daftar rekening yang pernah dipakai, buat autocomplete
-  const destSet = new Set(['DANA','Superbank','Krom Bank','BCA']);
+  const destByKey = {};
+  ['BCA','DANA','SeaBank','Krom Bank','Superbank'].forEach(d => destByKey[accountKey(d)] = d);
   Object.keys(TYPE_META).forEach(typeKey=>{
     (userCategories[typeKey] || []).forEach(cat=>{
-      const d = rawDestination(typeKey, cat);
-      if(d) destSet.add(d);
+      const d = canonicalAccountName(rawDestination(typeKey, cat));
+      if(d && !destByKey[accountKey(d)]) destByKey[accountKey(d)] = d;
     });
   });
-  const destDatalist = `<datalist id="planDestList">${Array.from(destSet).sort().map(d=>`<option value="${d}"></option>`).join('')}</datalist>`;
+  const destDatalist = `<datalist id="planDestList">${Object.values(destByKey).sort((a,b)=>a.localeCompare(b)).map(d=>`<option value="${escAttr(d)}"></option>`).join('')}</datalist>`;
 
   Object.keys(TYPE_META).forEach(typeKey=>{
     const meta = TYPE_META[typeKey];
@@ -1659,7 +1726,7 @@ function renderPlanPage(){
       const destFieldHtml = isIncome ? '' : `
         <input class="planned-dest-input" list="planDestList" placeholder="Kirim ke rekening (opsional)"
           data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
-          value="${dest}" onblur="saveCategoryDestination(this)">`;
+          value="${escAttr(canonicalAccountName(dest))}" onblur="saveCategoryDestination(this)">`;
       html += `<div class="plan-row">
         <div class="prow-top"><span class="prow-cat">${cat}</span></div>
         <div class="prow-inputs">
@@ -1713,7 +1780,9 @@ window.savePlannedAmount = async function(el){
 window.saveCategoryDestination = async function(el){
   const typeKey = el.dataset.type;
   const cat = el.dataset.cat;
-  const destination = el.value.trim();
+  const destination = canonicalAccountName(el.value);
+  el.value = destination;
+  if(destination === rawDestination(typeKey, cat)) return; // tidak ada perubahan, tidak perlu simpan
 
   if(!currentBudget[typeKey]) currentBudget[typeKey] = {};
   const existingAmount = rawPlanned(typeKey, cat);
