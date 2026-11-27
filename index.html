@@ -199,7 +199,7 @@
     <div class="auth-forgot" id="authForgot" onclick="doForgotPassword()">Lupa password?</div>
     <div class="auth-toggle" onclick="toggleAuthMode()" id="authToggle">Belum punya akun? Daftar</div>
     <div class="auth-divider" style="margin-top:26px;"><span>mau lihat-lihat dulu?</span></div>
-    <button class="btn-demo" onclick="startDemo()">👀 Coba Demo</button>
+    <button class="btn-demo" onclick="openDemo()">👀 Coba Demo</button>
     <div class="demo-hint">Pakai data contoh, tanpa daftar. Tidak ada yang tersimpan.</div>
   </div>
 
@@ -374,20 +374,18 @@
 </div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup,
-  sendPasswordResetEmail, updatePassword, reauthenticateWithCredential,
-  EmailAuthProvider, linkWithCredential
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import * as RealFS from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+// Mode Demo dibuka lewat alamat "?demo=1". Di mode itu Firebase TIDAK dimuat sama sekali:
+// tidak ada login, tidak ada koneksi ke server, semua data contoh hidup di memori browser.
+const DEMO_URL = new URLSearchParams(location.search).has('demo');
 
-// Fungsi Firestore disimpan di variabel (bukan import langsung) supaya Mode Demo
-// bisa menukarnya ke versi in-memory yang tidak menyentuh Firebase sama sekali.
-let { doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
-      query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
-      getDocFromCache, getDocFromServer } = RealFS;
+// Fungsi Firebase disimpan di variabel (bukan import langsung) supaya bisa dimuat hanya
+// kalau dibutuhkan, dan supaya Mode Demo bisa memakai versi in-memory (DemoFS).
+let doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
+    query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
+    getDocFromCache, getDocFromServer;
+let onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
+    GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, updatePassword,
+    reauthenticateWithCredential, EmailAuthProvider, linkWithCredential;
 
 // ====== ISI DENGAN FIREBASE CONFIG KAMU ======
 const firebaseConfig = {
@@ -401,18 +399,30 @@ const firebaseConfig = {
 };
 // ==============================================
 
-const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-auth.languageCode = 'id'; // email reset password dari Firebase pakai Bahasa Indonesia
-// Data disimpan juga di HP (IndexedDB), jadi saat app dibuka angka langsung tampil dari cache
-// lalu disinkronkan dengan server di belakang layar. Kalau browser tidak mendukung, pakai mode biasa.
-let db;
-try{
-  db = RealFS.initializeFirestore(fbApp, {
-    localCache: RealFS.persistentLocalCache({ tabManager: RealFS.persistentMultipleTabManager() })
-  });
-} catch(e){
-  db = RealFS.getFirestore(fbApp);
+let auth = null, db = null;
+if(!DEMO_URL){
+  const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  const [FApp, FAuth, RealFS] = await Promise.all([
+    import(FB + 'firebase-app.js'), import(FB + 'firebase-auth.js'), import(FB + 'firebase-firestore.js')
+  ]);
+  ({ doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
+     query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
+     getDocFromCache, getDocFromServer } = RealFS);
+  ({ onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
+     GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, updatePassword,
+     reauthenticateWithCredential, EmailAuthProvider, linkWithCredential } = FAuth);
+  const fbApp = FApp.initializeApp(firebaseConfig);
+  auth = FAuth.getAuth(fbApp);
+  auth.languageCode = 'id'; // email reset password dari Firebase pakai Bahasa Indonesia
+  // Data disimpan juga di HP (IndexedDB), jadi saat app dibuka angka langsung tampil dari cache
+  // lalu disinkronkan dengan server di belakang layar. Kalau browser tidak mendukung, pakai mode biasa.
+  try{
+    db = RealFS.initializeFirestore(fbApp, {
+      localCache: RealFS.persistentLocalCache({ tabManager: RealFS.persistentMultipleTabManager() })
+    });
+  } catch(e){
+    db = RealFS.getFirestore(fbApp);
+  }
 }
 
 let currentUser = null;
@@ -515,12 +525,11 @@ window.doAuth = async function(){
   }
 }
 
-const googleProvider = new GoogleAuthProvider();
 window.doGoogleAuth = async function(){
   const errEl = document.getElementById('authError');
   errEl.textContent = '';
   try{
-    await signInWithPopup(auth, googleProvider);
+    await signInWithPopup(auth, new GoogleAuthProvider());
   } catch(e){
     if(e.code !== 'auth/popup-closed-by-user'){
       errEl.textContent = translateAuthError(e.code);
@@ -551,7 +560,7 @@ function translateAuthError(code){
 }
 
 window.signOutUser = function(){
-  if(DEMO_MODE){ location.reload(); return; } // keluar demo = buang semua data contoh
+  if(DEMO_MODE){ location.href = location.pathname; return; } // keluar demo = buang semua data contoh, kembali ke app biasa
   signOut(auth);
 }
 
@@ -737,7 +746,7 @@ setTimeout(()=>{
   if(s && s.style.display !== 'none') document.getElementById('splashTxt').textContent = 'Masih memuat… sinyal sepertinya lambat.';
 }, 8000);
 
-onAuthStateChanged(auth, async (user)=>{
+if(!DEMO_URL) onAuthStateChanged(auth, async (user)=>{
   if(DEMO_MODE) return; // sedang mode demo, abaikan status login Firebase
   if(user){
     try{
@@ -975,7 +984,12 @@ function seedDemoData(){
   }
 }
 
-window.startDemo = async function(){
+// Tombol "Coba Demo": buka alamat ?demo=1 (halaman dimuat ulang tanpa Firebase)
+window.openDemo = function(){
+  location.href = location.pathname + '?demo=1';
+}
+
+async function startDemo(){
   DEMO_MODE = true;
   ({ doc, getDoc, setDoc, collection, addDoc, deleteDoc, getDocs,
      query, where, onSnapshot, serverTimestamp, updateDoc, deleteField,
@@ -1129,7 +1143,7 @@ function renderCatChips(){
   const wrap = document.getElementById('catChips');
   if(!selectedType){ wrap.innerHTML = ''; return; }
   const cats = userCategories[selectedType] || [];
-  wrap.innerHTML = cats.map(c=>`<button class="chip" onclick="selectCategory(this,'${c.replace(/'/g,"\\'")}')">${c}</button>`).join('');
+  wrap.innerHTML = cats.map(c=>`<button class="chip" data-cat="${esc(c)}" onclick="selectCategory(this, this.dataset.cat)">${esc(c)}</button>`).join('');
 }
 
 window.selectCategory = function(el, cat){
@@ -1192,7 +1206,7 @@ window.refreshTxPeriodOptions = function(manualKey){
   const keys = [periodKeyOf(...addMonths(ay, am, -1)), periodKeyOf(...addMonths(ay, am, 1))];
   if(desired && desired !== autoKey && !keys.includes(desired)) keys.push(desired);
   sel.innerHTML = `<option value="">Otomatis: ${periodDesc(autoKey)}</option>` +
-    keys.sort().map(k => `<option value="${k}">${periodDesc(k)}</option>`).join('');
+    keys.sort().map(k => `<option value="${esc(k)}">${esc(periodDesc(k))}</option>`).join('');
   sel.value = (desired && desired !== autoKey) ? desired : '';
 }
 
@@ -1406,14 +1420,14 @@ function renderTxList(){
       <div class="tx-left">
         <div class="tx-icon" style="background:${meta.color}22; color:${meta.color}">${meta.icon}</div>
         <div>
-          <div class="tx-cat">${t.category}</div>
-          <div class="tx-date">${t.date || ''}${t.details ? ' · '+t.details : ''}${t.periodManual ? ' · 📌 periode manual' : ''}</div>
+          <div class="tx-cat">${esc(t.category)}</div>
+          <div class="tx-date">${esc(t.date)}${t.details ? ' · '+esc(t.details) : ''}${t.periodManual ? ' · 📌 periode manual' : ''}</div>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="tx-amt ${cls}">${sign}${formatRp(t.amount)}</div>
-        <button onclick="editTransaction('${t.id}')" style="background:none;border:none;color:var(--navy);font-size:15px;padding:4px;">✎</button>
-        <button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:#ccc;font-size:16px;padding:4px;">✕</button>
+        <button onclick="editTransaction('${esc(t.id)}')" style="background:none;border:none;color:var(--navy);font-size:15px;padding:4px;">✎</button>
+        <button onclick="deleteTx('${esc(t.id)}')" style="background:none;border:none;color:#ccc;font-size:16px;padding:4px;">✕</button>
       </div>
     </div>`;
   }).join('');
@@ -1623,7 +1637,7 @@ function buildRekapAlokasiHtml(){
       return `
       <div style="margin-bottom:10px;">
         <div class="reserve-row" style="border-bottom:none; padding-bottom:2px;">
-          <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${dest}</span>
+          <span style="font-weight:700; color:${col}; display:flex; align-items:center; gap:6px;"><span style="width:9px; height:9px; border-radius:50%; background:${col}; display:inline-block;"></span>${esc(dest)}</span>
           <span style="font-weight:700; color:${col};">${formatRp(info.total)}</span>
         </div>
         <div style="font-size:10px; color:var(--muted); padding-left:15px; margin-bottom:3px;">${doneCount}/${info.items.length} sudah terkirim penuh</div>
@@ -1635,7 +1649,7 @@ function buildRekapAlokasiHtml(){
           const amtText = isDone ? formatRp(it.planned) : `${formatRp(it.actual)} / ${formatRp(it.planned)}`;
           const amtColor = isDone ? 'var(--green)' : (isPartial ? '#B8860B' : 'var(--muted)');
           return `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:3px 0 3px 4px;">
-            <span style="display:flex; align-items:center; gap:6px; color:var(--muted);"><span style="color:${iconColor}; font-weight:700; width:12px; display:inline-block;">${icon}</span>${it.label}</span>
+            <span style="display:flex; align-items:center; gap:6px; color:var(--muted);"><span style="color:${iconColor}; font-weight:700; width:12px; display:inline-block;">${icon}</span>${esc(it.label)}</span>
             <span style="color:${amtColor}; font-weight:${isDone ? '700' : '500'};">${amtText}</span>
           </div>`;
         }).join('')}
@@ -1664,7 +1678,7 @@ function buildSisaFreeHtml(){
   return `<div class="reserve-card" style="margin-bottom:14px;">
     <div class="section-label" style="margin:0 0 4px;">Sisa Uang Free Bulan Ini</div>
     <div class="plan-row" style="box-shadow:none; background:transparent; padding:6px 0 0;">
-      <div class="prow-top"><span class="prow-cat">${freeCat} <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis: gaji actual − planned kategori lain)</span></span></div>
+      <div class="prow-top"><span class="prow-cat">${esc(freeCat)} <span style="font-size:10px; color:var(--muted); font-weight:400;">(otomatis: gaji actual − planned kategori lain)</span></span></div>
       <div style="font-size:10px; color:var(--muted); margin:-2px 0 6px;">${actualForIncome > 0 ? 'Pakai Actual Income bulan ini' : 'Belum ada Actual Income, sementara pakai Planned Income'}</div>
       ${overBudgetWarning}
       <div class="prow-inputs">
@@ -1720,15 +1734,15 @@ function renderPlanPage(){
         ? (diff >= 0 ? `Lebih ${formatRp(diff)}` : `Kurang ${formatRp(Math.abs(diff))}`)
         : (diff >= 0 ? `Sisa ${formatRp(diff)}` : `Over ${formatRp(Math.abs(diff))}`);
       const diffClass = diff >= 0 ? 'under' : 'over';
-      const plannedFieldHtml = `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
+      const plannedFieldHtml = `<input type="tel" inputmode="numeric" class="planned-input" data-type="${typeKey}" data-cat="${escAttr(cat)}"
               value="${planned ? planned.toLocaleString('id-ID') : ''}" placeholder="0"
               oninput="formatPlanInput(this)" onblur="savePlannedAmount(this)">`;
       const destFieldHtml = isIncome ? '' : `
         <input class="planned-dest-input" list="planDestList" placeholder="Kirim ke rekening (opsional)"
-          data-type="${typeKey}" data-cat="${cat.replace(/"/g,'&quot;')}"
+          data-type="${typeKey}" data-cat="${escAttr(cat)}"
           value="${escAttr(canonicalAccountName(dest))}" onblur="saveCategoryDestination(this)">`;
       html += `<div class="plan-row">
-        <div class="prow-top"><span class="prow-cat">${cat}</span></div>
+        <div class="prow-top"><span class="prow-cat">${esc(cat)}</span></div>
         <div class="prow-inputs">
           <div style="flex:1;">
             <label>Planned</label>
@@ -1811,7 +1825,7 @@ window.renderCatMgr = function(){
         <button onclick="moveCategory('${type}',${i},-1)" ${i===0 ? 'disabled' : ''}>▲</button>
         <button onclick="moveCategory('${type}',${i},1)" ${i===list.length-1 ? 'disabled' : ''}>▼</button>
       </div>
-      <span class="catmgr-name">${c}</span>
+      <span class="catmgr-name">${esc(c)}</span>
       <div class="catmgr-actions">
         <button onclick="renameCategory('${type}',${i})" title="Ubah nama">✎</button>
         <button onclick="removeCategory('${type}',${i})" title="Hapus" class="del-btn">🗑</button>
@@ -2013,12 +2027,12 @@ function renderReserveHistory(){
     }).join(', ');
     return `<div class="reserve-hist-item">
       <div>
-        <div>${w.note || '(tanpa catatan)'} · ${w.date || ''}</div>
-        <div class="rh-note">dari: ${fromLabel}</div>
+        <div>${w.note ? esc(w.note) : '(tanpa catatan)'} · ${esc(w.date)}</div>
+        <div class="rh-note">dari: ${esc(fromLabel)}</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="rh-amt">-${formatRp(w.amount)}</div>
-        <button onclick="deleteReserveWithdrawal('${w.id}')">✕</button>
+        <button onclick="deleteReserveWithdrawal('${esc(w.id)}')">✕</button>
       </div>
     </div>`;
   }).join('');
@@ -2093,6 +2107,9 @@ window.goPage = function(name){
 }
 
 // ---------- UTIL ----------
+// Teks dari pengguna (nama kategori, catatan, dll.) disaring sebelum masuk ke HTML,
+// supaya tulisan seperti <b> atau kode hanya tampil sebagai teks biasa.
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function formatRp(n){
   const sign = n < 0 ? '-' : '';
   return sign + 'Rp' + Math.abs(Math.round(n)).toLocaleString('id-ID');
@@ -2106,6 +2123,9 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
 }
+
+// Mode Demo langsung jalan kalau alamatnya ?demo=1
+if(DEMO_URL) startDemo().catch(e => { console.error(e); showSplashError('Gagal membuka demo. Coba lagi.'); });
 
 // Register service worker
 if('serviceWorker' in navigator){
